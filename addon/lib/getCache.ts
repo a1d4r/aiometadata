@@ -1297,6 +1297,8 @@ const CATALOG_META_FIELDS = [
   'id',
   'type',
   'name',
+  'originalTitle',
+  'englishTitle',
   'poster',
   '_rawPosterUrl',
   'posterShape',
@@ -1970,6 +1972,8 @@ async function writeMetaComponentsWithConfig({ config, metaId, result, ttl = MET
   const basicMeta: any = {
     id: metaId,
     name: meta.name,
+    originalTitle: meta.originalTitle,
+    englishTitle: meta.englishTitle,
     type: meta.type,
     description: meta.description,
     imdb_id: meta.imdb_id,

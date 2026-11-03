@@ -666,16 +666,18 @@ function parseMedia(el, type, genreList = [], config = {}) {
     : el?.genres ? parseGenres(el.genres) : [];
 
   let name = type === 'movie' ? el.title : el.name;
+  const originalTitle = type === 'movie' ? el.original_title : el.original_name;
 
   if(el.translations){
     el.overview = processOverviewTranslations(el.translations, config.language, el.overview);
-    const originalTitle = type === 'movie' ? el.original_title : el.original_name;
     name = processTitleTranslations(el.translations, config.language, name, type, el.original_language, originalTitle);
   }
 
   return {
     id: `tmdb:${el.id}`,
     name: name,
+    originalTitle: originalTitle || undefined,
+    englishTitle: englishTitleFromTmdb(el.translations, type, el.original_language, originalTitle),
     genres: genres,
     poster: el.poster_path ? `https://image.tmdb.org/t/p/w500${el.poster_path}` : null,
     background: el.backdrop_path ? tmdbImageUrl(tmdbBackdropSize(), el.backdrop_path) : null,
@@ -957,6 +959,21 @@ function processTitleTranslations(translations, language, title, type, originalL
     }
   }
   return title;
+}
+
+/**
+ * English title from TMDB translations: en-US, then the original title when the
+ * original language is English or the en-US entry leaves the title empty (TMDB's
+ * own en-US title is the original one then), then any other English variant.
+ */
+function englishTitleFromTmdb(translations, type, originalLanguage = null, originalTitle = null) {
+  const field = type === 'movie' ? 'title' : 'name';
+  const usTranslation = tmdb.getTranslations(translations, 'en-US');
+  const usTitle = usTranslation?.data?.[field];
+  if (usTitle && usTitle.trim() !== '') return usTitle;
+  if ((usTranslation || originalLanguage === 'en') && originalTitle && originalTitle.trim() !== '') return originalTitle;
+  const other = translations?.translations?.find((t) => t.iso_639_1 === 'en' && t.data?.[field] && t.data[field].trim() !== '');
+  return other ? other.data[field] : undefined;
 }
 
 // Helper function to add meta provider attribution to overview
@@ -3508,6 +3525,7 @@ module.exports = {
   classifyTmdbLocalization,
   processOverviewTranslations,
   processTitleTranslations,
+  englishTitleFromTmdb,
   genSeasonsString,
   isReleasedDigitally,
   getTvdbCertification,
