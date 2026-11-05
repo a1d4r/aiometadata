@@ -25,6 +25,7 @@ import { fetchImdbSuggestions, type ImdbSuggestion } from '../utils/imdbSuggesti
 import { fetchLumiereSearch, fetchLumierePeopleSearch, type LumiereResult } from '../utils/lumiereSearch.js';
 import { lumiereApiBase } from '../utils/lumiereLists.js';
 import { mapWithLimit } from '../utils/concurrency.js';
+import { hydrationLimit, yoVariants } from '../utils/yoSpellings.js';
 const idMappings: any = require('./id-mappings');
 
 
@@ -407,6 +408,7 @@ function normalizeForComparison(str: string): string {
 async function performTmdbSearch(type: string, query: string, language: string, config: any, searchPersons: boolean = true, page: number = 1, peopleOnly: boolean = false): Promise<any[]> {
   const startTime = Date.now();
   const rawResults = new Map();
+  const variants = peopleOnly ? [] : yoVariants(query);
   logger.info(`Starting TMDB search for type "${type}" with query: "${query}"`);
 
   if (isImdbId(query) && !peopleOnly) {
@@ -453,12 +455,19 @@ async function performTmdbSearch(type: string, query: string, language: string, 
     return true;
   })();
 
-  const [titleRes, personCredits] = await Promise.all([
+  const searchTitles = (q: string) => type === 'movie'
+      ? moviedb.searchMovie({ query: q, language, include_adult: !excludesAdult(config), page }, config)
+      : moviedb.searchTv({ query: q, language, include_adult: !excludesAdult(config), page }, config);
+
+  const [titleRes, variantRes, personCredits] = await Promise.all([
       peopleOnly
           ? Promise.resolve({ results: [] })
-          : (type === 'movie'
-              ? moviedb.searchMovie({ query, language, include_adult: !excludesAdult(config), page }, config)
-              : moviedb.searchTv({ query, language, include_adult: !excludesAdult(config), page }, config)),
+          : searchTitles(query),
+
+      Promise.all(variants.map((v) => searchTitles(v).catch((error: any) => {
+          logger.warn(`TMDB search for variant "${v}" failed: ${error.message}`);
+          return null;
+      }))),
 
       shouldSearchPersons
           ? moviedb.searchPerson({ query, language: language }, config).then(async (personRes: any) => {
@@ -556,12 +565,12 @@ async function performTmdbSearch(type: string, query: string, language: string, 
           : Promise.resolve([])
   ]);
 
-  if (titleRes?.results) {
-    titleRes.results.forEach((media: any) => {
+  [titleRes, ...variantRes].forEach((res: any) => {
+    res?.results?.forEach((media: any) => {
         media.matchType = 'title';
         addRawResult(media);
     });
-  }
+  });
   personCredits.forEach((media: any) => {
       media.matchType = 'person';
       addRawResult(media);
@@ -570,7 +579,7 @@ async function performTmdbSearch(type: string, query: string, language: string, 
   logger.debug(`TMDB gathered ${rawResults.size} unique potential results in ${Date.now() - startTime}ms`);
   }
 
-  const sortedRawResults = Utils.sortSearchResults(Array.from(rawResults.values()), query).slice(0, 25);
+  const sortedRawResults = Utils.sortSearchResults(Array.from(rawResults.values()), query).slice(0, hydrationLimit(variants));
 
   const light = config._searchLight === true
     && !hasAgeRatingCap(config)
