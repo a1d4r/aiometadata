@@ -404,9 +404,23 @@ function normalizeForComparison(str: string): string {
     .trim();
 }
 
+// TMDB tells е from ё, and Russian titles are typed either way: "елки" misses "Ёлки 2".
+// Returns the other spellings to ask for too: every ё as е, then one е as ё at a time.
+function yoVariants(query: string): string[] {
+  const variants = new Set<string>();
+  if (/[ёЁ]/.test(query)) variants.add(query.replace(/ё/g, 'е').replace(/Ё/g, 'Е'));
+  for (let i = 0; i < query.length; i++) {
+    if (query[i] === 'е' || query[i] === 'Е') {
+      variants.add(query.slice(0, i) + (query[i] === 'е' ? 'ё' : 'Ё') + query.slice(i + 1));
+    }
+  }
+  return Array.from(variants).slice(0, 3);
+}
+
 async function performTmdbSearch(type: string, query: string, language: string, config: any, searchPersons: boolean = true, page: number = 1, peopleOnly: boolean = false): Promise<any[]> {
   const startTime = Date.now();
   const rawResults = new Map();
+  const variants = peopleOnly ? [] : yoVariants(query);
   logger.info(`Starting TMDB search for type "${type}" with query: "${query}"`);
 
   if (isImdbId(query) && !peopleOnly) {
@@ -453,12 +467,19 @@ async function performTmdbSearch(type: string, query: string, language: string, 
     return true;
   })();
 
-  const [titleRes, personCredits] = await Promise.all([
+  const searchTitles = (q: string) => type === 'movie'
+      ? moviedb.searchMovie({ query: q, language, include_adult: !excludesAdult(config), page }, config)
+      : moviedb.searchTv({ query: q, language, include_adult: !excludesAdult(config), page }, config);
+
+  const [titleRes, variantRes, personCredits] = await Promise.all([
       peopleOnly
           ? Promise.resolve({ results: [] })
-          : (type === 'movie'
-              ? moviedb.searchMovie({ query, language, include_adult: !excludesAdult(config), page }, config)
-              : moviedb.searchTv({ query, language, include_adult: !excludesAdult(config), page }, config)),
+          : searchTitles(query),
+
+      Promise.all(variants.map((v) => searchTitles(v).catch((error: any) => {
+          logger.warn(`TMDB search for variant "${v}" failed: ${error.message}`);
+          return null;
+      }))),
 
       shouldSearchPersons
           ? moviedb.searchPerson({ query, language: language }, config).then(async (personRes: any) => {
@@ -556,12 +577,12 @@ async function performTmdbSearch(type: string, query: string, language: string, 
           : Promise.resolve([])
   ]);
 
-  if (titleRes?.results) {
-    titleRes.results.forEach((media: any) => {
+  [titleRes, ...variantRes].forEach((res: any) => {
+    res?.results?.forEach((media: any) => {
         media.matchType = 'title';
         addRawResult(media);
     });
-  }
+  });
   personCredits.forEach((media: any) => {
       media.matchType = 'person';
       addRawResult(media);
@@ -570,7 +591,8 @@ async function performTmdbSearch(type: string, query: string, language: string, 
   logger.debug(`TMDB gathered ${rawResults.size} unique potential results in ${Date.now() - startTime}ms`);
   }
 
-  const sortedRawResults = Utils.sortSearchResults(Array.from(rawResults.values()), query).slice(0, 25);
+  // Each spelling variant brings up to one more TMDB page of 20.
+  const sortedRawResults = Utils.sortSearchResults(Array.from(rawResults.values()), query).slice(0, 25 + 20 * variants.length);
 
   const light = config._searchLight === true
     && !hasAgeRatingCap(config)
