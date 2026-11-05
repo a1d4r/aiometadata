@@ -5724,6 +5724,10 @@ const catalogRoute = async function (req, res) {
       const metas = await withCatalogCriticRatings(responseData.metas, config, req);
       if (metas !== responseData.metas) responseData = { ...responseData, metas };
     }
+    if (Array.isArray(responseData?.metas) && req.params.forJellyfin !== '1') {
+      const metas = await require('./lib/kinoApi').withKinoApi(responseData.metas);
+      if (metas !== responseData.metas) responseData = { ...responseData, metas };
+    }
 
     const httpCacheOpts = { cacheMaxAge: 0, staleRevalidate: 5 * 60 }; // No cache for regular catalogs, 5 min stale-while-revalidate
     respond(req, res, responseData, httpCacheOpts);
