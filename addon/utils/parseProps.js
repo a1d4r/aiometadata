@@ -530,12 +530,12 @@ function sortSearchResults(results, query) {
     HQ_POPULARITY_THRESHOLD: 5.0,
     LQ_EXACT: { MIN_VOTES: 1, MIN_POPULARITY: 0.5, RECENT_YEAR_SPAN: 5 },
     STARTS_WITH: {
-      MIN_VOTES: 15,
-      MIN_POPULARITY: 1,
+      MIN_VOTES: 1,
+      MIN_POPULARITY: 0.5,
       CURRENT_YEAR_MIN_VOTES: 1,
       CURRENT_YEAR_MIN_POPULARITY: 0.5,
     },
-    CONTAINS: { MIN_VOTES: 10, MIN_SIMILARITY: 0.4 },
+    CONTAINS: { MIN_VOTES: 1, MIN_POPULARITY: 0.5 },
     OTHER: { MIN_VOTES: 50, MIN_POPULARITY: 2.5 },
     OBSCURE: { AGE_CUTOFF: 20, MAX_POPULARITY: 0.5, MAX_VOTES: 5 },
   };
@@ -579,7 +579,7 @@ function sortSearchResults(results, query) {
       }
 
       case "Contains":
-        return item.voteCount >= RULES.CONTAINS.MIN_VOTES && item.similarity >= RULES.CONTAINS.MIN_SIMILARITY;
+        return item.voteCount >= RULES.CONTAINS.MIN_VOTES || item.score >= RULES.CONTAINS.MIN_POPULARITY;
 
       case "Other":
         return item.voteCount >= RULES.OTHER.MIN_VOTES && item.score >= RULES.OTHER.MIN_POPULARITY;
