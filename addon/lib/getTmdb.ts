@@ -1122,6 +1122,11 @@ export async function movieImages(params: any, config: UserConfig) {
   );
 }
 
+/** All of a title's images, every language, straight from TMDB: not kept in Redis, the caller keeps what it needs. */
+export async function titleImagesUncached(mediaType: 'movie' | 'tv', id: string, config: UserConfig) {
+  return makeTmdbRequest(`/${mediaType}/${id}/images`, getApiKey(config), {}, 'GET', null, config);
+}
+
 export async function tvImages(params: any, config: UserConfig) {
   const { id, ...queryParams } = params;
   const normalizedQueryParams = normalizeTmdbCacheQueryParams(queryParams);
@@ -1195,6 +1200,7 @@ module.exports = {
   selectTmdbImageByLang,
   movieImages,
   tvImages,
+  titleImagesUncached,
   __privateTmdbCacheNormalizers: tmdbCacheNormalizers,
   getMemoryStats: () => ({
     accountDetailsCache: accountDetailsCache.size,
