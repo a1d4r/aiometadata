@@ -5728,6 +5728,10 @@ const catalogRoute = async function (req, res) {
       const metas = await require('./lib/kinoApi').withKinoApi(responseData.metas);
       if (metas !== responseData.metas) responseData = { ...responseData, metas };
     }
+    if (Array.isArray(responseData?.metas) && req.params.forJellyfin !== '1') {
+      const metas = await require('./lib/tmdbLogoInfo').withTmdbLogoInfo(responseData.metas, config);
+      if (metas !== responseData.metas) responseData = { ...responseData, metas };
+    }
 
     const httpCacheOpts = { cacheMaxAge: 0, staleRevalidate: 5 * 60 }; // No cache for regular catalogs, 5 min stale-while-revalidate
     respond(req, res, responseData, httpCacheOpts);
@@ -5909,6 +5913,10 @@ const metaRoute = async function (req, res) {
     {
       const { criticRatingsWanted, metaWithCriticRatings } = require('./lib/stremioCriticRatings');
       if (criticRatingsWanted(config, req)) result = { ...result, meta: await metaWithCriticRatings(result.meta) };
+    }
+    if (req.params.forJellyfin !== '1') {
+      const [meta] = await require('./lib/tmdbLogoInfo').withTmdbLogoInfo([result.meta], config);
+      if (meta !== result.meta) result = { ...result, meta };
     }
 
     // Use aggressive cache control for meta routes to ensure fresh data when config changes
