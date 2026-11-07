@@ -5725,7 +5725,12 @@ const catalogRoute = async function (req, res) {
       if (metas !== responseData.metas) responseData = { ...responseData, metas };
     }
     if (Array.isArray(responseData?.metas) && req.params.forJellyfin !== '1') {
-      const metas = await require('./lib/kinoApi').withKinoApi(responseData.metas);
+      // Each waits a little for new titles: side by side, the tiles wait for the slower one only.
+      const [withKinopoisk, addLogoInfo] = await Promise.all([
+        require('./lib/kinoApi').withKinoApi(responseData.metas),
+        require('./lib/tmdbLogoInfo').lookUpTmdbLogoInfo(responseData.metas, config),
+      ]);
+      const metas = addLogoInfo(withKinopoisk);
       if (metas !== responseData.metas) responseData = { ...responseData, metas };
     }
 
@@ -5909,6 +5914,10 @@ const metaRoute = async function (req, res) {
     {
       const { criticRatingsWanted, metaWithCriticRatings } = require('./lib/stremioCriticRatings');
       if (criticRatingsWanted(config, req)) result = { ...result, meta: await metaWithCriticRatings(result.meta) };
+    }
+    if (req.params.forJellyfin !== '1') {
+      const [meta] = await require('./lib/tmdbLogoInfo').withTmdbLogoInfo([result.meta], config);
+      if (meta !== result.meta) result = { ...result, meta };
     }
 
     // Use aggressive cache control for meta routes to ensure fresh data when config changes
