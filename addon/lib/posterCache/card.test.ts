@@ -101,6 +101,7 @@ describe('composeCard', () => {
     const meta = await sharp(out).metadata();
     assert.equal(meta.format, 'jpeg');
     assert.equal(meta.isProgressive, false);
+    assert.equal(meta.chromaSubsampling, '4:4:4');
     assert.deepEqual([meta.width, meta.height], [1920, 1080]);
     const img = sharp(out);
     assert.ok(near(await pixel(img, 300, 600), [0, 0, 0]), 'left of the fanart is black');
@@ -109,6 +110,34 @@ describe('composeCard', () => {
     assert.ok(near(await pixel(img, 1900, 1000), [0, 0, 0]), 'under the fanart');
     const [r] = await pixel(img, 1900, 10);
     assert.ok(r > 100, `the fanart shows through the mask at the top right (${r})`);
+  });
+
+  test('lays a soft edge as a straight resize over black would', async () => {
+    // An orange disc fading out over 60 px, as the edges of a TMDB logo: faint pixels keep their colour.
+    const [w, h] = [500, 222];
+    const px = Buffer.alloc(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const a = Math.round(255 * Math.min(1, Math.max(0, (100 - Math.hypot(x - 250, y - 111)) / 60)));
+      if (a) px.set([255, 160, 40, a], (y * w + x) * 4);
+    }
+    const logo = await sharp(px, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
+    const fanart = await sharp({ create: { width: 1280, height: 720, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
+    const box = logoBox(w, h, 's');
+    assert.ok(box.left + box.width <= 640, 'the logo is all over the black left of the fanart');
+    const region = { left: box.left, top: box.top, width: box.width, height: box.height };
+    const got = await sharp(await composeCard(fanart, { image: logo, under: 's' })).extract(region).raw().toBuffer();
+    const want = await sharp(logo).flatten({ background: '#000000' })
+      .resize(box.width, box.height, { fit: 'fill', kernel: 'lanczos3' }).raw().toBuffer();
+    let sum = 0;
+    let max = 0;
+    for (let i = 0; i < want.length; i++) {
+      const d = Math.abs(got[i] - want[i]);
+      sum += d;
+      max = Math.max(max, d);
+    }
+    const mean = sum / want.length;
+    // JPEG alone: mean 0.25, max 6 here. Divided by the alpha twice: mean 20, max 254.
+    assert.ok(mean < 1 && max < 24, `mean ${mean.toFixed(2)}, max ${max}`);
   });
 
   test('makes the card with no logo the same, the logo left out', async () => {

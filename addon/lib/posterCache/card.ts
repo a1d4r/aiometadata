@@ -46,7 +46,7 @@ const LOGO_MAX_W = 780;
 const LOGO_MAX_H = 150;
 /** The TMDB size of a logo; `original` when it is shown wider. */
 const LOGO_SIZE_W = 500;
-const JPEG_QUALITY = 88;
+const JPEG_QUALITY = 92;
 
 const GONE_MS = 5 * 60 * 1000;
 const BUSY_MS = 30 * 1000;
@@ -98,13 +98,23 @@ async function source(imageClass: ImageClass, url: string): Promise<Buffer> {
   }
 }
 
+/**
+ * The raw layout of a buffer sharp gave out, to take it back in. Not the whole `info`: its
+ * `premultiplied: true` says a resize premultiplied on the way, the buffer is already back
+ * to straight alpha; read as raw.premultiplied it is divided by the alpha once more, and a
+ * soft edge goes bright.
+ */
+function rawOf(info: { width: number; height: number; channels: number }) {
+  return { width: info.width, height: info.height, channels: info.channels };
+}
+
 export async function composeCard(fanart: Buffer, logo: { image: Buffer; under: 's' | 'n' } | null): Promise<Buffer> {
   const sharp = require('sharp');
   // The shell stretches a background over its frame, whatever its proportions.
   const fan = await sharp(fanart, { failOn: 'none' }).resize(FANART_W, FANART_H, { fit: 'fill' }).removeAlpha()
     .raw().toBuffer({ resolveWithObject: true });
   const layers: any[] = [
-    { input: fan.data, raw: fan.info, left: FANART_X, top: 0 },
+    { input: fan.data, raw: rawOf(fan.info), left: FANART_X, top: 0 },
     { input: CARD_V1_MASK, left: FANART_X, top: 0 },
   ];
   if (logo) {
@@ -113,11 +123,12 @@ export async function composeCard(fanart: Buffer, logo: { image: Buffer; under: 
     const box = logoBox(width, height, logo.under);
     const mark = await sharp(logo.image, { failOn: 'none' }).ensureAlpha()
       .resize(box.width, box.height, { fit: 'fill', kernel: 'lanczos3' }).raw().toBuffer({ resolveWithObject: true });
-    layers.push({ input: mark.data, raw: mark.info, left: box.left, top: box.top });
+    layers.push({ input: mark.data, raw: rawOf(mark.info), left: box.left, top: box.top });
   }
-  // Baseline: whether the shell decodes progressive JPEG is not known.
+  // Baseline: whether the shell decodes progressive JPEG is not known. Colour at full
+  // resolution: at 4:2:0 the thin coloured strokes of a logo go dull and smeared.
   return sharp({ create: { width: SCREEN_W, height: SCREEN_H, channels: 3, background: '#000000' } })
-    .composite(layers).jpeg({ quality: JPEG_QUALITY, progressive: false }).toBuffer();
+    .composite(layers).jpeg({ quality: JPEG_QUALITY, progressive: false, chromaSubsampling: '4:4:4' }).toBuffer();
 }
 
 async function sourceLogo(logo: NonNullable<CardRequest['logo']>): Promise<Buffer> {
