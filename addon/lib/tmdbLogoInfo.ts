@@ -149,6 +149,21 @@ function readRows(s: Store, files: string[]): Map<string, LogoRow> {
   return out;
 }
 
+/**
+ * Whether a TMDB logo, by its file name without the extension, has been seen on a tile;
+ * null when the store cannot be read.
+ */
+export function isKnownLogo(stem: string): boolean | null {
+  const s = openStore();
+  if (!s) return null;
+  try {
+    return readRows(s, [`${stem}.png`, `${stem}.svg`]).size > 0;
+  } catch (error) {
+    warn(`Could not read the TMDB logo store: ${(error as Error).message}`);
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Queue: one TMDB images request per title, a few at a time
 // ---------------------------------------------------------------------------

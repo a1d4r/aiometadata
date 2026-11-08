@@ -32,7 +32,7 @@ let delayMs = 0;
   require.cache[file] = mod;
 }
 
-import { logoFileOf, logoRows, titleOf, lookUpTmdbLogoInfo, withLogoFields, withTmdbLogoInfo } from './tmdbLogoInfo';
+import { isKnownLogo, logoFileOf, logoRows, titleOf, lookUpTmdbLogoInfo, withLogoFields, withTmdbLogoInfo } from './tmdbLogoInfo';
 
 const RU = '8YGHe69tPNbSaMbUwSo3AHkELKJ.png';
 const EN = 'enLogo.png';
@@ -177,6 +177,12 @@ describe('withTmdbLogoInfo', () => {
     assert.deepEqual(out.map((m: any) => m.logoLang), ['en', 'ru']);
   });
 
+  test('knows the logos it has seen, by the file name without the extension', () => {
+    assert.equal(isKnownLogo(RU.replace(/\.png$/, '')), true);
+    assert.equal(isKnownLogo('plain'), true, 'an SVG, asked for as .png');
+    assert.equal(isKnownLogo('neverSeen'), false);
+  });
+
   test('non-TMDB logo, no logo or no TMDB id: the same array, nothing asked', async () => {
     calls.length = 0;
     const metas = [
@@ -250,6 +256,7 @@ describe('a store made with logo sizes', () => {
         { type: 'movie', _tmdbId: '800', logo: cached('new800.png') },
       ], {});
       assert.deepEqual(out.map((m: any) => m.logoLang), ['ru', 'en']);
+      assert.equal(fresh.isKnownLogo('new800'), true);
     } finally {
       process.chdir(realCwd);
       require.cache[id] = shared;
