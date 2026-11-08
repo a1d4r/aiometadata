@@ -84,16 +84,19 @@ describe('parseCardPath', () => {
 });
 
 describe('logoBox', () => {
-  // The four logos of bg_probe (make_img.py), all with an English name under them.
-  test('sizes and places a logo as make_img.py of bg_probe', () => {
-    assert.deepEqual(logoBox(500, 222, 's'), { left: 130, top: 61, width: 336, height: 149 });
-    assert.deepEqual(logoBox(498, 39, 's'), { left: 130, top: 149, width: 780, height: 61 });
-    assert.deepEqual(logoBox(500, 171, 's'), { left: 130, top: 79, width: 382, height: 131 });
-    assert.deepEqual(logoBox(499, 119, 's'), { left: 130, top: 101, width: 458, height: 109 });
+  // k = min(sqrt(90000 / (w * h)), 780 / w, 200 / h), the bottom at y 256.
+  test('sizes a logo by area, at most 780 x 200, and puts its bottom at y 256', () => {
+    // Wide, as Джентльмены at w500: the width bounds it.
+    assert.deepEqual(logoBox(498, 39, 'n'), { left: 130, top: 195, width: 780, height: 61 });
+    // Nearly square: the height bounds it, its top at y 56.
+    assert.deepEqual(logoBox(500, 450, 'n'), { left: 130, top: 56, width: 222, height: 200 });
+    // The area bounds the rest.
+    assert.deepEqual(logoBox(500, 171, 'n'), { left: 130, top: 81, width: 513, height: 175 });
+    assert.deepEqual(logoBox(499, 119, 'n'), { left: 130, top: 109, width: 614, height: 147 });
   });
 
-  test('puts the logo 46 px lower with no English name', () => {
-    assert.equal(logoBox(500, 222, 'n').top, 61 + 46);
+  test('puts the logo 46 px higher over an English name', () => {
+    assert.equal(logoBox(500, 171, 's').top, 81 - 46);
   });
 
   test('depends only on the proportions', () => {
@@ -126,7 +129,7 @@ describe('composeCard', () => {
     assert.deepEqual([meta.width, meta.height], [1920, 1080]);
     const img = sharp(out);
     assert.ok(near(await pixel(img, 300, 600), [0, 0, 0]), 'left of the fanart is black');
-    assert.ok(near(await pixel(img, 300, 130), [255, 0, 0]), 'the logo, box 130..466 x 61..210');
+    assert.ok(near(await pixel(img, 300, 130), [255, 0, 0]), 'the logo, box 130..580 x 10..210');
     assert.ok(near(await pixel(img, 300, 230), [0, 0, 0]), 'under the logo');
     assert.ok(near(await pixel(img, 1900, 1000), [0, 0, 0]), 'under the fanart');
     const [r] = await pixel(img, 1900, 10);
@@ -286,5 +289,21 @@ describe('posterCardHandler', () => {
     const r = await get(`/card/v1/s/${LOGO}.png/aJHokMbljvjADYdit5fK5VQsXEG.jpg`);
     assert.equal(r.status, 200);
     assert.equal(r.headers['content-type'], 'image/jpeg');
+  });
+
+  test('a logo shown wider than its w500 copy is taken from the original', async () => {
+    // As Джентльмены: TMDB gives 498x39 at w500 for a 1111x87 original.
+    const wide = 'gJHokMbljvjADYdit5fK5VQsXEG';
+    const db = new (require('better-sqlite3'))(path.join(dir, 'addon', 'data', 'tmdblogos.sqlite'));
+    db.prepare('INSERT INTO tmdb_logos (file, lang) VALUES (?, ?)').run(`${wide}.png`, 'ru');
+    db.close();
+    const red = (width: number, height: number) => sharp({ create: { width, height, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } } }).png().toBuffer();
+    images[`${TMDB}w500/${wide}.png`] = await red(498, 39);
+    images[`${TMDB}original/${wide}.png`] = await red(1111, 87);
+    images[`${TMDB}w1280/cJHokMbljvjADYdit5fK5VQsXEG.jpg`] = images[`${TMDB}w1280/xJHokMbljvjADYdit5fK5VQsXEG.jpg`];
+    fetched.length = 0;
+    const r = await get(`/card/v1/n/${wide}.png/cJHokMbljvjADYdit5fK5VQsXEG.jpg`);
+    assert.equal(r.status, 200);
+    assert.ok(fetched.includes(`${TMDB}original/${wide}.png`), fetched.join(', '));
   });
 });

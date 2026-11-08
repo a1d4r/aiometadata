@@ -10,8 +10,9 @@
  * logo and fanart are TMDB file names, so only TMDB is fetched and a URL always means
  * the same picture (the shell keeps a picture by its URL, even across a reinstall).
  * s: an English name is shown under the logo, n: none. v1 is the layout, its size
- * included: a new one is a new version. A failure is never answered with a picture:
- * the shell would keep it.
+ * included. Until a Melange release uses it, a change to it stays in v1 and the cards
+ * cached on the server and on the Dune are cleared; after that, a change is a new
+ * version of the path. A failure is never answered with a picture: the shell would keep it.
  */
 import * as crypto from 'node:crypto';
 import consola from 'consola';
@@ -28,7 +29,7 @@ const logger = consola.withTag('PosterCard');
 const TMDB = 'https://image.tmdb.org/t/p/';
 const FILE = '[A-Za-z0-9]{10,40}';
 // Kept with @card of server/Caddyfile in the server repository, which lets only these paths
-// through; a new layout is v2, here and in Caddy.
+// through; a new version of the path goes here and in Caddy.
 const CARD_PATH = new RegExp(`^/card/v1/(?:([sn])/(${FILE})\\.(?:png|svg)/)?(${FILE}\\.jpg)$`);
 
 // Layout v1 on a 1920x1080 screen: the fanart in (640, 0, 1280x720) under the mask; the
@@ -36,7 +37,7 @@ const CARD_PATH = new RegExp(`^/card/v1/(?:([sn])/(${FILE})\\.(?:png|svg)/)?(${F
 // its bottom at y 256, or 210 over the English name. This file alone owns the size of the
 // logo (LOGO_AREA, LOGO_MAX_W, LOGO_MAX_H, LOGO_SIZE_W): Melange no longer draws it. What
 // Melange keeps in step with it (the text at x 130, the title bottoms 210/256, the mask
-// cat2_mask.png): a change on either side is v2, in the path and here.
+// cat2_mask.png): a change on either side follows the versioning rule at the top.
 const SCREEN_W = 1920;
 const SCREEN_H = 1080;
 const FANART_X = 640;
@@ -44,9 +45,9 @@ const FANART_W = 1280;
 const FANART_H = 720;
 const LOGO_X = 130;
 const LOGO_BOTTOM = { s: 210, n: 256 };
-const LOGO_AREA = 50000;
+const LOGO_AREA = 90000;
 const LOGO_MAX_W = 780;
-const LOGO_MAX_H = 150;
+const LOGO_MAX_H = 200;
 /** The TMDB size of a logo; `original` when it is shown wider. */
 const LOGO_SIZE_W = 500;
 const JPEG_QUALITY = 92;
@@ -143,8 +144,11 @@ export async function composeCard(fanart: Buffer, logo: { image: Buffer; under: 
 async function sourceLogo(logo: NonNullable<CardRequest['logo']>): Promise<Buffer> {
   const small = await source('logo', `${TMDB}w${LOGO_SIZE_W}/${logo.file}.png`);
   const { width, height } = await require('sharp')(small, { failOn: 'none' }).metadata();
-  // At the TMDB width and shown wider than it: the original is sharper.
-  if (width >= LOGO_SIZE_W && height && logoBox(width, height, logo.under).width > width) {
+  // Shown wider than w500: the original is sharper. TMDB scales every size to its width, up as
+  // well, and rounds the height, so w500 can come out a few px narrower whatever the original
+  // (a 1111x87 logo gives 498x39): its width says nothing of the original's. An SVG's original
+  // .png is rasterised 2000 wide.
+  if (width && height && logoBox(width, height, logo.under).width > width) {
     return source('logo', `${TMDB}original/${logo.file}.png`);
   }
   return small;
