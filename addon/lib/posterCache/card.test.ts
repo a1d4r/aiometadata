@@ -64,7 +64,7 @@ describe('parseCardPath', () => {
 
 describe('logoBox', () => {
   // The four logos of bg_probe (make_img.py), all with an English name under them.
-  test('sizes and places a logo as make_img.py and aio_catv_logo', () => {
+  test('sizes and places a logo as make_img.py of bg_probe', () => {
     assert.deepEqual(logoBox(500, 222, 's'), { left: 130, top: 61, width: 336, height: 149 });
     assert.deepEqual(logoBox(498, 39, 's'), { left: 130, top: 149, width: 780, height: 61 });
     assert.deepEqual(logoBox(500, 171, 's'), { left: 130, top: 79, width: 382, height: 131 });

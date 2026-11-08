@@ -28,10 +28,12 @@ const TMDB = 'https://image.tmdb.org/t/p/';
 const FILE = '[A-Za-z0-9]{10,40}';
 const CARD_PATH = new RegExp(`^/card/v1/(?:([sn])/(${FILE})\\.(?:png|svg)/)?(${FILE}\\.jpg)$`);
 
-// Layout v1 on a 1920x1080 screen, as Melange 0.55.0 draws its card (view_catalog.php):
-// the fanart in (640, 0, 1280x720) under the mask; the logo as aio_catv_logo sizes it,
-// its left at the text of the panel, its bottom at the bottom of the title (y 40 + 216),
-// AIO_CATV_SUB_H (46) higher over the English name.
+// Layout v1 on a 1920x1080 screen: the fanart in (640, 0, 1280x720) under the mask; the
+// logo sized by area (LOGO_AREA px at most in LOGO_MAX_W x LOGO_MAX_H), its left at x 130,
+// its bottom at y 256, or 210 over the English name. This file alone owns the size of the
+// logo (LOGO_AREA, LOGO_MAX_W, LOGO_MAX_H, LOGO_SIZE_W): Melange no longer draws it. What
+// Melange keeps in step with it (the text at x 130, the title bottoms 210/256, the mask
+// cat2_mask.png): a change on either side is v2, in the path and here.
 const SCREEN_W = 1920;
 const SCREEN_H = 1080;
 const FANART_X = 640;
@@ -66,7 +68,7 @@ export function cardKey(r: CardRequest): string {
   return r.logo ? `card:v1:${r.logo.under}:${r.logo.file}:${r.fanart}` : `card:v1:${r.fanart}`;
 }
 
-/** Where a logo of w x h goes on the screen: the formula of aio_catv_logo. */
+/** Where a logo of w x h goes on the screen. */
 export function logoBox(w: number, h: number, under: 's' | 'n'): { left: number; top: number; width: number; height: number } {
   const k = Math.min(Math.sqrt(LOGO_AREA / (w * h)), LOGO_MAX_W / w, LOGO_MAX_H / h);
   const width = Math.max(1, Math.round(w * k));
