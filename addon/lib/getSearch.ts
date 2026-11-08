@@ -19,6 +19,7 @@ import consola from 'consola';
 import { tmdbImageUrl, tmdbLogoSize, tmdbBackdropSize, tmdbPosterSize } from '../utils/tmdbImageSize';
 import { hasAgeRatingCap } from '../utils/ageRating';
 import { buildCertificationMap } from '../utils/contentRating';
+import { tmdbDetails } from './metaDetails';
 const { cacheWrapMetaSmart, cacheWrapGlobal }: any = require('./getCache');
 const { getSetting }: any = require('./settingsService');
 import { fetchImdbSuggestions, type ImdbSuggestion } from '../utils/imdbSuggestions.js';
@@ -661,6 +662,8 @@ async function performTmdbSearch(type: string, query: string, language: string, 
         parsed.runtime = type === 'movie' ? Utils.parseRunTime(details.runtime) : null;
         if(type === 'series') parsed.runtime  = Utils.parseRunTime(details.episode_run_time?.[0] ?? details.last_episode_to_air?.runtime ?? details.next_episode_to_air?.runtime ?? null);
         parsed.app_extras = { releaseDates: details.release_dates, certification, certifications, cast: Utils.parseCast(details.credits, config.castCount) };
+        if (mediaType === 'movie') parsed.country = Utils.parseCoutry(details.production_countries);
+        parsed.countries = tmdbDetails(details).countries;
         return { parsed, details };
     } catch (error: any) {
         logger.error(`Failed to hydrate TMDB item ${media.id} (${media.title || media.name}):`, error);
