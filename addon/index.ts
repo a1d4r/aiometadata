@@ -6605,6 +6605,9 @@ addon.get("/poster-cache/proxy/landscape/:type/:id", streamArtWithFallback('land
 {
   const { posterCacheHandler } = require('./lib/posterCache/handler.js');
   const { SIZED_WIDTH, widthStep } = require('./lib/posterCache/resize.js');
+  const { posterCardHandler } = require('./lib/posterCache/card.js');
+  // Melange's card backgrounds: /poster-cache/card/..., never an image URL.
+  addon.use(posterCacheConfig.POSTER_CACHE_ROUTE, posterCardHandler());
   // In the path, since the image URL after it carries its own query.
   addon.use(posterCacheConfig.POSTER_CACHE_ROUTE, (req, res, next) => {
     const sized = /^\/w(\d{2,4})(\/(?!proxy\/).*)$/.exec(req.url);
