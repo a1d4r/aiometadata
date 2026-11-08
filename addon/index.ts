@@ -5726,11 +5726,12 @@ const catalogRoute = async function (req, res) {
     }
     if (Array.isArray(responseData?.metas) && req.params.forJellyfin !== '1') {
       // Each waits a little for new titles: side by side, the tiles wait for the slower one only.
-      const [withKinopoisk, addLogoInfo] = await Promise.all([
+      const [withKinopoisk, addLogoInfo, addRussianAnime] = await Promise.all([
         require('./lib/kinoApi').withKinoApi(responseData.metas),
         require('./lib/tmdbLogoInfo').lookUpTmdbLogoInfo(responseData.metas, config),
+        require('./lib/shikimori').lookUpShikimori(responseData.metas),
       ]);
-      const metas = addLogoInfo(withKinopoisk);
+      const metas = addRussianAnime(addLogoInfo(withKinopoisk));
       if (metas !== responseData.metas) responseData = { ...responseData, metas };
     }
 
@@ -5916,7 +5917,11 @@ const metaRoute = async function (req, res) {
       if (criticRatingsWanted(config, req)) result = { ...result, meta: await metaWithCriticRatings(result.meta) };
     }
     if (req.params.forJellyfin !== '1') {
-      const [meta] = await require('./lib/tmdbLogoInfo').withTmdbLogoInfo([result.meta], config);
+      const [addLogoInfo, addRussianAnime] = await Promise.all([
+        require('./lib/tmdbLogoInfo').lookUpTmdbLogoInfo([result.meta], config),
+        require('./lib/shikimori').lookUpShikimori([result.meta]),
+      ]);
+      const [meta] = addRussianAnime(addLogoInfo([result.meta]));
       if (meta !== result.meta) result = { ...result, meta };
     }
 
