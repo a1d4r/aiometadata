@@ -49,13 +49,12 @@ describe('parseCardPath', () => {
   const logo = 'kqjL17yufvn9OVLyXYpvtyrFfak';
   const fan = 'xJHokMbljvjADYdit5fK5VQsXEG.jpg';
 
-  test('takes the line under the logo and TMDB file names', () => {
-    const r = parseCardPath(`/card/v1/s/${logo}.svg/${fan}`);
-    assert.deepEqual(r, { logo: { file: logo, under: 's' }, fanart: fan });
-    assert.equal(cardKey(r!), `card:v1:s:${logo}:${fan}`);
+  test('takes the logo and the fanart by TMDB file names', () => {
+    const r = parseCardPath(`/card/v1/n/${logo}.svg/${fan}`);
+    assert.deepEqual(r, { logo, fanart: fan });
+    assert.equal(cardKey(r!), `card:v1:n:${logo}:${fan}`);
     // An SVG logo is asked from TMDB as .png, so both name one card.
-    assert.equal(cardKey(r!), cardKey(parseCardPath(`/card/v1/s/${logo}.png/${fan}`)!));
-    assert.notEqual(cardKey(r!), cardKey(parseCardPath(`/card/v1/n/${logo}.png/${fan}`)!));
+    assert.equal(cardKey(r!), cardKey(parseCardPath(`/card/v1/n/${logo}.png/${fan}`)!));
   });
 
   test('takes a card with no logo', () => {
@@ -66,17 +65,18 @@ describe('parseCardPath', () => {
 
   test('refuses anything off the list', () => {
     for (const path of [
-      `/card/v2/s/${logo}.png/${fan}`,
-      `/card/v1/1920/s/${logo}.png/${fan}`,
+      `/card/v2/n/${logo}.png/${fan}`,
+      `/card/v1/1920/n/${logo}.png/${fan}`,
+      `/card/v1/s/${logo}.png/${fan}`,
       `/card/v1/x/${logo}.png/${fan}`,
-      `/card/v1/s/${fan}`,
+      `/card/v1/n/${fan}`,
       `/card/v1/-/${fan}`,
-      `/card/v1/s/${logo}.png/xJHokMbljvjADYdit5fK5VQsXEG.png`,
-      `/card/v1/s/${logo}.gif/${fan}`,
-      `/card/v1/s/short.png/${fan}`,
-      `/card/v1/s/${logo}.png/${fan}?x=1`,
-      `/card/v1/s/..%2F${logo}.png/${fan}`,
-      `/card/v1/s/https:/image.tmdb.org/t/p/w500/${logo}.png/${fan}`,
+      `/card/v1/n/${logo}.png/xJHokMbljvjADYdit5fK5VQsXEG.png`,
+      `/card/v1/n/${logo}.gif/${fan}`,
+      `/card/v1/n/short.png/${fan}`,
+      `/card/v1/n/${logo}.png/${fan}?x=1`,
+      `/card/v1/n/..%2F${logo}.png/${fan}`,
+      `/card/v1/n/https:/image.tmdb.org/t/p/w500/${logo}.png/${fan}`,
       `/card/v1/xJHokMbljvjADYdit5fK5VQsXEG.png`,
       '/card/v1/',
     ]) assert.equal(parseCardPath(path), null, path);
@@ -87,20 +87,16 @@ describe('logoBox', () => {
   // k = min(sqrt(90000 / (w * h)), 780 / w, 200 / h), the bottom at y 256.
   test('sizes a logo by area, at most 780 x 200, and puts its bottom at y 256', () => {
     // Wide, as Джентльмены at w500: the width bounds it.
-    assert.deepEqual(logoBox(498, 39, 'n'), { left: 130, top: 195, width: 780, height: 61 });
+    assert.deepEqual(logoBox(498, 39), { left: 130, top: 195, width: 780, height: 61 });
     // Nearly square: the height bounds it, its top at y 56.
-    assert.deepEqual(logoBox(500, 450, 'n'), { left: 130, top: 56, width: 222, height: 200 });
+    assert.deepEqual(logoBox(500, 450), { left: 130, top: 56, width: 222, height: 200 });
     // The area bounds the rest.
-    assert.deepEqual(logoBox(500, 171, 'n'), { left: 130, top: 81, width: 513, height: 175 });
-    assert.deepEqual(logoBox(499, 119, 'n'), { left: 130, top: 109, width: 614, height: 147 });
-  });
-
-  test('puts the logo 46 px higher over an English name', () => {
-    assert.equal(logoBox(500, 171, 's').top, 81 - 46);
+    assert.deepEqual(logoBox(500, 171), { left: 130, top: 81, width: 513, height: 175 });
+    assert.deepEqual(logoBox(499, 119), { left: 130, top: 109, width: 614, height: 147 });
   });
 
   test('depends only on the proportions', () => {
-    assert.deepEqual(logoBox(2000, 888, 's'), logoBox(500, 222, 's'));
+    assert.deepEqual(logoBox(2000, 888), logoBox(500, 222));
   });
 });
 
@@ -121,7 +117,7 @@ describe('composeCard', () => {
 
   test('makes a baseline JPEG of the screen: black, the fanart under the mask, the logo', async () => {
     const { fanart, logo } = await inputs();
-    const out = await composeCard(fanart, { image: logo, under: 's' });
+    const out = await composeCard(fanart, logo);
     const meta = await sharp(out).metadata();
     assert.equal(meta.format, 'jpeg');
     assert.equal(meta.isProgressive, false);
@@ -129,8 +125,8 @@ describe('composeCard', () => {
     assert.deepEqual([meta.width, meta.height], [1920, 1080]);
     const img = sharp(out);
     assert.ok(near(await pixel(img, 300, 600), [0, 0, 0]), 'left of the fanart is black');
-    assert.ok(near(await pixel(img, 300, 130), [255, 0, 0]), 'the logo, box 130..580 x 10..210');
-    assert.ok(near(await pixel(img, 300, 230), [0, 0, 0]), 'under the logo');
+    assert.ok(near(await pixel(img, 300, 130), [255, 0, 0]), 'the logo, box 130..580 x 56..256');
+    assert.ok(near(await pixel(img, 300, 270), [0, 0, 0]), 'under the logo');
     assert.ok(near(await pixel(img, 1900, 1000), [0, 0, 0]), 'under the fanart');
     const [r] = await pixel(img, 1900, 10);
     assert.ok(r > 100, `the fanart shows through the mask at the top right (${r})`);
@@ -146,10 +142,10 @@ describe('composeCard', () => {
     }
     const logo = await sharp(px, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
     const fanart = await sharp({ create: { width: 1280, height: 720, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
-    const box = logoBox(w, h, 's');
+    const box = logoBox(w, h);
     assert.ok(box.left + box.width <= 640, 'the logo is all over the black left of the fanart');
     const region = { left: box.left, top: box.top, width: box.width, height: box.height };
-    const got = await sharp(await composeCard(fanart, { image: logo, under: 's' })).extract(region).raw().toBuffer();
+    const got = await sharp(await composeCard(fanart, logo)).extract(region).raw().toBuffer();
     const want = await sharp(logo).flatten({ background: '#000000' })
       .resize(box.width, box.height, { fit: 'fill', kernel: 'lanczos3' }).raw().toBuffer();
     let sum = 0;
@@ -167,7 +163,7 @@ describe('composeCard', () => {
   test('refuses a cut-off source instead of making a card of it', async () => {
     const { fanart, logo } = await inputs();
     await assert.rejects(composeCard(await cutJpeg(1280, 720), null));
-    await assert.rejects(composeCard(fanart, { image: logo.subarray(0, Math.floor(logo.length * 0.6)), under: 's' }));
+    await assert.rejects(composeCard(fanart, logo.subarray(0, Math.floor(logo.length * 0.6))));
   });
 
   test('makes the card with no logo the same, the logo left out', async () => {
@@ -176,7 +172,7 @@ describe('composeCard', () => {
     const meta = await sharp(bare).metadata();
     assert.deepEqual([meta.width, meta.height], [1920, 1080]);
     assert.ok(near(await pixel(sharp(bare), 300, 130), [0, 0, 0]), 'no logo');
-    const [a, b] = await Promise.all([pixel(sharp(bare), 1900, 10), pixel(sharp(await composeCard(fanart, { image: logo, under: 's' })), 1900, 10)]);
+    const [a, b] = await Promise.all([pixel(sharp(bare), 1900, 10), pixel(sharp(await composeCard(fanart, logo)), 1900, 10)]);
     assert.ok(near(a, b), 'the fanart and the mask as with a logo');
   });
 });
@@ -267,7 +263,7 @@ describe('posterCardHandler', () => {
 
   test('a logo no tile carries is not fetched: 404, not kept', async () => {
     fetched.length = 0;
-    const r = await get(`/card/v1/s/${LOGO}.png/xJHokMbljvjADYdit5fK5VQsXEG.jpg`);
+    const r = await get(`/card/v1/n/${LOGO}.png/xJHokMbljvjADYdit5fK5VQsXEG.jpg`);
     assert.equal(r.status, 404);
     assert.equal(r.headers['cache-control'], 'no-store');
     assert.deepEqual(fetched, []);
@@ -286,7 +282,7 @@ describe('posterCardHandler', () => {
     db.close();
     // Another fanart: the one above is remembered as failed for a while.
     images[`${TMDB}w1280/aJHokMbljvjADYdit5fK5VQsXEG.jpg`] = images[`${TMDB}w1280/xJHokMbljvjADYdit5fK5VQsXEG.jpg`];
-    const r = await get(`/card/v1/s/${LOGO}.png/aJHokMbljvjADYdit5fK5VQsXEG.jpg`);
+    const r = await get(`/card/v1/n/${LOGO}.png/aJHokMbljvjADYdit5fK5VQsXEG.jpg`);
     assert.equal(r.status, 200);
     assert.equal(r.headers['content-type'], 'image/jpeg');
   });
