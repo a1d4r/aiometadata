@@ -1999,6 +1999,7 @@ async function writeMetaComponentsWithConfig({ config, metaId, result, ttl = MET
     studios: meta.studios,
     networks: meta.networks,
     countries: meta.countries,
+    belongsToCollection: meta.belongsToCollection,
     airDays: meta.airDays,
     airTime: meta.airTime,
     _originalLanguage: meta._originalLanguage,

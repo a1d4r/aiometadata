@@ -27,6 +27,7 @@ const idMappings = require('./id-mappings.js');
 const { withEpisodeOrder } = require('../utils/episodeOrder');
 const { buildCertificationMap } = require('../utils/contentRating');
 const { tmdbDetails, tvdbSeriesDetails, tvdbMovieDetails, tvmazeDetails, jikanDetails } = require('./metaDetails');
+const { belongsToCollectionOf } = require('./tmdbCollection');
 
 
 const logger = consola.withTag('Meta');
@@ -1559,6 +1560,7 @@ async function buildTmdbMovieResponse(stremioId, movieData, language, config, us
     behaviorHints: { defaultVideoId: kitsuId && idProvider === 'kitsu' ? `kitsu:${kitsuId}` : imdbId || stremioId, hasScheduledVideos: false },
     app_extras: { cast: Utils.parseCast(credits), directors: directorDetails, writers: writerDetails, releaseDates: movieData.release_dates, certifications, certification },
     ...tmdbDetails(movieData),
+    belongsToCollection: belongsToCollectionOf(movieData),
     ...stampIds(allIds),
   };
 }
