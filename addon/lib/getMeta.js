@@ -28,6 +28,7 @@ const { withEpisodeOrder } = require('../utils/episodeOrder');
 const { buildCertificationMap } = require('../utils/contentRating');
 const { tmdbDetails, tvdbSeriesDetails, tvdbMovieDetails, tvmazeDetails, jikanDetails } = require('./metaDetails');
 const { belongsToCollectionOf } = require('./tmdbCollection');
+const { creatorsOf } = require('./tmdbCreators');
 
 
 const logger = consola.withTag('Meta');
@@ -1997,7 +1998,7 @@ async function buildTmdbSeriesResponse(stremioId, seriesData, language, config, 
       defaultVideoId: null,
       hasScheduledVideos: true,
     },
-    app_extras: { cast: Utils.parseCast(credits), directors: directorDetails, writers: writerDetails, seasonPosters: tmdbSeasonPosters, certifications, certification },
+    app_extras: { cast: Utils.parseCast(credits), directors: directorDetails, writers: writerDetails, creators: creatorsOf(seriesData), seasonPosters: tmdbSeasonPosters, certifications, certification },
     ...tmdbDetails(seriesData),
     ...stampIds(allIds),
   };

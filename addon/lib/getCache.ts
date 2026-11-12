@@ -1248,6 +1248,9 @@ function applyCastCountProjection(meta: any, config: any): any {
     if (meta.app_extras && Array.isArray(meta.app_extras.writers)) {
       meta.app_extras.writers = [];
     }
+    if (meta.app_extras && Array.isArray(meta.app_extras.creators)) {
+      meta.app_extras.creators = [];
+    }
     if (Array.isArray(meta?.links)) {
       meta.links = meta.links.filter((l: any) => l.category !== 'Directors' && l.category !== 'Writers' && l.category !== 'Executive Producers');
     }
