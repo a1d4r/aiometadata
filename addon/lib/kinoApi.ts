@@ -7,14 +7,18 @@ import { getSettleSeconds } from './metaColdStore/config';
 import { envInt } from '../utils/envNumber';
 
 /**
- * Kinopoisk data from Kino API (kinoapi.lampac.dev) on catalog and search tiles.
+ * Kinopoisk data from Kino API (kinoapi.lampac.dev) on catalog and search tiles, and on
+ * the title's own meta (not on the tiles a person or collection page lists).
  *
  * Added after the catalog caches, right before the response, so its own freshness
  * does not depend on how long a row or a search stays in Redis. Raw answers are kept
  * whole in their own SQLite file; tiles read a small projection of them. Titles not
  * stored yet are fetched in batches for every user at once, and a response waits for
  * them only briefly; anything stale is served as is and refreshed in the background.
- * Without KINOAPI_API_KEY nothing here runs and the file is never opened.
+ * Read from the environment, not the settings registry:
+ *   KINOAPI_API_KEY          empty: nothing here runs and the file is never opened;
+ *   KINOAPI_CATALOG_WAIT_MS  how long a row, a search or a meta waits for titles never looked up
+ *                            (600 by default, 0 never waits); the others get their data on the next view.
  */
 
 const logger = consola.withTag('Kino API');
@@ -621,13 +625,13 @@ async function enrich(metas: any[]): Promise<any[]> {
   return out;
 }
 
-/** Catalog and search tiles with Kinopoisk fields added; the same array when there is nothing to add or no key. */
+/** Catalog and search tiles, or a title's meta, with Kinopoisk fields added; the same array when there is nothing to add or no key. */
 export async function withKinoApi(metas: any[]): Promise<any[]> {
   if (!Array.isArray(metas) || metas.length === 0 || !apiKey()) return metas;
   try {
     return await enrich(metas);
   } catch (error) {
-    storeError(`Tiles left without Kinopoisk data: ${(error as Error).message}`);
+    storeError(`Titles left without Kinopoisk data: ${(error as Error).message}`);
     return metas;
   }
 }
