@@ -48,6 +48,9 @@ describe('sourceOf', () => {
     assert.equal(sourceOf({ type: 'movie', id: 'mal:1' }), null);
     assert.equal(sourceOf({ type: 'tv', _tmdbId: '1' }), null);
     assert.equal(sourceOf(null), null);
+    // Person pages and TVDB collections reach the meta route's lookup too; they must stay without requests.
+    assert.equal(sourceOf({ type: 'movie', id: 'tvdbc:123' }), null);
+    assert.equal(sourceOf({ type: 'person', id: 'tmdb:287' }), null);
   });
 });
 
@@ -184,6 +187,37 @@ describe('applyView', () => {
     const meta = { id: 'tt1' };
     assert.equal(applyView(meta, {}), meta);
     assert.equal(applyView(meta, null), meta);
+  });
+});
+
+describe('a full meta, as the meta route sends it', () => {
+  // The shape of meta/series/tt0388629.json: ids stamped by getMeta, an ISO release, a status.
+  const meta = {
+    id: 'tt0388629',
+    type: 'series',
+    _tmdbId: '37854',
+    _imdbId: 'tt0388629',
+    imdb_id: 'tt0388629',
+    released: '1999-10-20T11:00:00.000Z',
+    releaseInfo: '1999-',
+    status: 'Returning Series',
+    app_extras: { cast: [{ name: 'Mayumi Tanaka' }], certifications: { US: 'TV-14' }, seasonPosters: ['s1.jpg'] },
+  };
+
+  test('is looked up under the same key as its tile, so a title seen in a row needs no request', () => {
+    assert.equal(sourceOf(meta)?.k, sourceOf({ id: 'tt0388629', type: 'series', _tmdbId: '37854' })?.k);
+    assert.equal(sourceOf(meta)?.k, 'tmdb:tv:37854');
+    assert.equal(freshnessTier(meta, NOW), 'day');
+    assert.equal(freshnessTier({ type: 'movie', released: '2016-12-02T01:00:00.000Z' }, NOW), 'month');
+  });
+
+  test('keeps everything else in app_extras and is copied, not changed', () => {
+    const snapshot = structuredClone(meta);
+    const next = applyView(meta, { kpRating: '8.5', kpVotes: 81100, kpId: '382731', age: '12+' });
+    assert.deepEqual(meta, snapshot);
+    assert.equal(next.app_extras.cast, meta.app_extras.cast);
+    assert.deepEqual(next.app_extras.certifications, { US: 'TV-14', RU: '12+' });
+    assert.deepEqual([next.kpRating, next.kpVotes, next.kpId], ['8.5', 81100, '382731']);
   });
 });
 
