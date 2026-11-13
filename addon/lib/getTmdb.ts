@@ -655,7 +655,7 @@ export async function personInfo(params: any, config: UserConfig) {
 export async function personMovieCredits(params: any, config: UserConfig) {
   const { id, ...queryParams } = params;
   const normalizedQueryParams = normalizeTmdbCacheQueryParams(queryParams);
-  const cacheKey = `tmdb:person:movie_credits:v2:${id}${getTmdbQueryCacheSuffix(normalizedQueryParams)}`;
+  const cacheKey = `tmdb:person:movie_credits:v3:${id}${getTmdbQueryCacheSuffix(normalizedQueryParams)}`;
   return cacheWrapGlobal(cacheKey, () =>
     makeTmdbRequest(`/person/${id}/movie_credits`, getApiKey(config), normalizedQueryParams, 'GET', null, config)
       .then(normalizeTmdbPersonCreditsForCache),
@@ -666,7 +666,7 @@ export async function personMovieCredits(params: any, config: UserConfig) {
 export async function personTvCredits(params: any, config: UserConfig) {
   const { id, ...queryParams } = params;
   const normalizedQueryParams = normalizeTmdbCacheQueryParams(queryParams);
-  const cacheKey = `tmdb:person:tv_credits:v2:${id}${getTmdbQueryCacheSuffix(normalizedQueryParams)}`;
+  const cacheKey = `tmdb:person:tv_credits:v3:${id}${getTmdbQueryCacheSuffix(normalizedQueryParams)}`;
   return cacheWrapGlobal(cacheKey, () =>
     makeTmdbRequest(`/person/${id}/tv_credits`, getApiKey(config), normalizedQueryParams, 'GET', null, config)
       .then(normalizeTmdbPersonCreditsForCache),
