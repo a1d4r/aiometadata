@@ -17,6 +17,8 @@ export interface Person {
   imdbId?: string | null;
   /** The Jellyfin person type of what TMDB says they are known for. */
   knownFor: string | null;
+  /** Set when the biography is in another language than asked for: TMDB had none in it. */
+  biographyLang?: string;
 }
 
 const KNOWN_FOR: Record<string, string> = {
@@ -41,12 +43,23 @@ async function tmdbPerson(config: any, id: number, fallback: any = null): Promis
     logger.debug(`Person details unavailable for ${id}: ${error?.message || error}`);
   }
   if (!details && !fallback) return null;
+  // TMDB does not fall back to English by itself, and many people only have that.
+  let biography = details?.biography || '';
+  let biographyLang: string | undefined;
+  if (details && !biography && !/^en(-|$)/i.test(language)) {
+    const english = await moviedb.personInfo({ id, language: 'en-US' }, config).catch(() => null);
+    if (english?.biography) {
+      biography = english.biography;
+      biographyLang = 'en';
+    }
+  }
   return {
     source: 'tmdb',
     id,
     name: details?.name || fallback?.name,
     photo: image(details?.profile_path || fallback?.profile_path, 'h632'),
-    biography: details?.biography || '',
+    biography,
+    ...(biographyLang ? { biographyLang } : {}),
     birthday: details?.birthday || null,
     deathday: details?.deathday || null,
     birthplace: details?.place_of_birth || null,
@@ -123,6 +136,7 @@ async function tvdbPerson(config: any, id: number): Promise<Person | null> {
     name: record.name,
     photo: tvdbImage(record.image),
     biography: bio?.biography || '',
+    ...(bio?.biography && bio.language !== lang3 ? { biographyLang: 'en' } : {}),
     birthday: record.birth || null,
     deathday: record.death || null,
     birthplace: record.birthPlace || null,
@@ -303,8 +317,16 @@ async function tmdbCredits(config: any, personId: number): Promise<any[]> {
         metas.push(meta);
       }
       meta._votes = Math.max(meta._votes || 0, Number(row.vote_count) || 0);
-      for (const kind of creditTypes(row, credit, type)) {
+      const episodes = Number(row.episode_count) || 0;
+      if (episodes > (meta._episodes || 0)) meta._episodes = episodes;
+      const kinds = creditTypes(row, credit, type);
+      for (const kind of kinds) {
         if (!meta._personTypes.includes(kind)) meta._personTypes.push(kind);
+      }
+      const role = String((credit === 'cast' ? row.character : row.job) || '').trim();
+      if (kinds.length && role) {
+        meta._roles ??= [];
+        if (!meta._roles.some((r: any) => r.text === role)) meta._roles.push({ text: role, credit, kinds });
       }
     }
   };

@@ -20,6 +20,7 @@ const { getManifest, resolveManifestTags, DEFAULT_LANGUAGE } = require("./lib/ge
 const { resolveInstallFilters, uniformTagRating, allowsUnrated, scopeTagsToCatalog } = require("./utils/ageRating");
 const { withTagExclusions } = require("./utils/tagExclusions");
 const { getMeta } = require("./lib/getMeta");
+const { withMetaCastCount } = require('./lib/metaCastCount');
 const { cacheWrapMetaSmart, cacheWrapCatalog, cacheWrapSearch, cacheWrapJikanApi, cacheWrapGlobal, classifyResultAllowEmpty, getCacheHealth, clearCacheHealth, logCacheHealth, stableStringify, deleteKeysByPattern, scanKeys } = require("./lib/getCache");
 const { hasPermission } = require("./lib/authSession");
 const { isOidcConfigured } = require("./lib/oidc");
@@ -5793,7 +5794,8 @@ const metaRoute = async function (req, res) {
   const cacheOptions = {
     enableErrorCaching: true,
     maxRetries: 2, // Allow retries for temporary failures
-    config: fullConfig,
+    // Melange: a title page lists more actors than a catalog tile (castCount).
+    config: withMetaCastCount(fullConfig),
   };
   
   try {
