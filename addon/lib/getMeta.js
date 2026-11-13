@@ -29,6 +29,7 @@ const { buildCertificationMap } = require('../utils/contentRating');
 const { tmdbDetails, tvdbSeriesDetails, tvdbMovieDetails, tvmazeDetails, jikanDetails } = require('./metaDetails');
 const { belongsToCollectionOf } = require('./tmdbCollection');
 const { creatorsOf } = require('./tmdbCreators');
+const { withCastOverSeasons } = require('./tmdbAggregateCast');
 
 
 const logger = consola.withTag('Meta');
@@ -1575,6 +1576,8 @@ async function buildTmdbSeriesResponse(stremioId, seriesData, language, config, 
   const tvdbId = allIds?.tvdbId;
   const kitsuId = allIds?.kitsuId;
   const malId = allIds?.malId;
+  // Asked now, awaited before the cast is used, so it runs alongside the art requests.
+  const castOverSeasons = moviedb.tvCastOverSeasons(tmdbId, shouldForceLatinTmdbCast(config) ? 'en-US' : language, config);
   let credits = await ensureLatinTmdbCredits('tv', tmdbId, seriesData.credits, config);
   if (!credits) {
     credits = { cast: [], crew: [] };
@@ -1955,6 +1958,8 @@ async function buildTmdbSeriesResponse(stremioId, seriesData, language, config, 
 
   const certifications = buildCertificationMap({ tmdbTv: seriesData.content_ratings });
   const certification = certifications?.US ?? null;
+  const seasonsCast = await castOverSeasons;
+  credits = withCastOverSeasons(credits, seasonsCast);
   let links = [ ...Utils.buildLinks(imdbRating, imdbId, name, 'series', seriesData.genres, credits, language, castCount, userUUID)];
 
   // Priority: User's language -> English (most common) -> All trailers
@@ -2005,7 +2010,8 @@ async function buildTmdbSeriesResponse(stremioId, seriesData, language, config, 
   if (runtime) {
     meta.runtime = Utils.parseRunTime(runtime);
   }
-  return meta;
+  // A failed aggregate_credits must not pin the latest season cast in the cache for months.
+  return _markDegraded(meta, seasonsCast === undefined);
 }
 
 async function buildTvdbMovieResponse(stremioId, movieData, language, config, userUUID, enrichmentData = {}, isAnime = false) {

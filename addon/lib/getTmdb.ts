@@ -25,6 +25,7 @@ import {
 } from './tmdbCacheNormalizers.js';
 import { LRUCache } from 'lru-cache';
 import { UserConfig } from '../types/index';
+import { topAggregateCast, AGGREGATE_CAST_VERSION, type CastCredit } from './tmdbAggregateCast';
 
 const TMDB_API_URL = 'https://api.themoviedb.org/3';
 const ACCOUNT_DETAILS_CACHE_MAX = 2000;
@@ -581,6 +582,25 @@ export async function movieCredits(params: any, config: UserConfig) {
 export async function tvCredits(params: any, config: UserConfig) {
   const { id, ...queryParams } = params;
   return makeTmdbRequest(`/tv/${id}/credits`, getApiKey(config), queryParams, 'GET', null, config);
+}
+
+/**
+ * The first cast of a series over all its seasons (tmdbAggregateCast.ts). Only that cut is
+ * cached: the whole reply runs to hundreds of KB. Never rejects, as callers start it early
+ * and await it later. null when TMDB has no cast; undefined when the request failed, which
+ * is not cached. Either way the caller keeps `credits`.
+ */
+export async function tvCastOverSeasons(id: string | number, language: string, config: UserConfig): Promise<CastCredit[] | null | undefined> {
+  try {
+    return await cacheWrapGlobal(`tmdb:tv:aggregate_cast:v${AGGREGATE_CAST_VERSION}:${id}:${language}`, () =>
+      makeTmdbRequest(`/tv/${id}/aggregate_credits`, getApiKey(config), { language }, 'GET', null, config)
+        .then(topAggregateCast),
+      7 * 24 * 60 * 60
+    );
+  } catch (error: any) {
+    consola.warn(`[TMDB] aggregate_credits of tv ${id} failed, keeping the latest season cast: ${error?.message}`);
+    return undefined;
+  }
 }
 
 export async function searchMovie(params: any, config: UserConfig) {
@@ -1195,6 +1215,7 @@ module.exports = {
   tvExternalIds,
   movieCredits,
   tvCredits,
+  tvCastOverSeasons,
   getTmdbImages,
   getWatchProviders,
   selectTmdbImageByLang,

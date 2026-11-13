@@ -20,6 +20,7 @@ import { tmdbImageUrl, tmdbLogoSize, tmdbBackdropSize, tmdbPosterSize } from '..
 import { hasAgeRatingCap } from '../utils/ageRating';
 import { buildCertificationMap } from '../utils/contentRating';
 import { tmdbDetails } from './metaDetails';
+import { withCastOverSeasons } from './tmdbAggregateCast';
 const { cacheWrapMetaSmart, cacheWrapGlobal }: any = require('./getCache');
 const { getSetting }: any = require('./settingsService');
 import { fetchImdbSuggestions, type ImdbSuggestion } from '../utils/imdbSuggestions.js';
@@ -605,6 +606,8 @@ async function performTmdbSearch(type: string, query: string, language: string, 
         const langSet = new Set([langCode, 'en', 'null']);
         if (originalLanguage) langSet.add(originalLanguage);
         const imageLanguages = Array.from(langSet).join(',');
+        // The cast of the series meta (getMeta.js), not the latest season of `credits`.
+        const castOverSeasons = mediaType === 'movie' ? null : moviedb.tvCastOverSeasons(media.id, language, config);
         const details = mediaType === 'movie'
             ? await moviedb.movieInfo({ id: media.id, language, append_to_response: "external_ids,release_dates,images,translations,keywords,credits", include_image_language: imageLanguages }, config)
             : await moviedb.tvInfo({ id: media.id, language, append_to_response: "external_ids,content_ratings,images,translations,keywords,credits", include_image_language: imageLanguages }, config);
@@ -661,7 +664,8 @@ async function performTmdbSearch(type: string, query: string, language: string, 
         parsed.keywords = moviedb.keywordNamesOf(details) ?? [];
         parsed.runtime = type === 'movie' ? Utils.parseRunTime(details.runtime) : null;
         if(type === 'series') parsed.runtime  = Utils.parseRunTime(details.episode_run_time?.[0] ?? details.last_episode_to_air?.runtime ?? details.next_episode_to_air?.runtime ?? null);
-        parsed.app_extras = { releaseDates: details.release_dates, certification, certifications, cast: Utils.parseCast(details.credits, config.castCount) };
+        const cast = Utils.parseCast(withCastOverSeasons(details.credits, await castOverSeasons), config.castCount);
+        parsed.app_extras = { releaseDates: details.release_dates, certification, certifications, cast };
         if (mediaType === 'movie') parsed.country = Utils.parseCoutry(details.production_countries);
         parsed.countries = tmdbDetails(details).countries;
         return { parsed, details };
