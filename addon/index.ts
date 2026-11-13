@@ -5919,12 +5919,13 @@ const metaRoute = async function (req, res) {
       if (criticRatingsWanted(config, req)) result = { ...result, meta: await metaWithCriticRatings(result.meta) };
     }
     if (req.params.forJellyfin !== '1') {
-      const [withKinopoisk, addLogoInfo, addRussianAnime] = await Promise.all([
+      const [withKinopoisk, addLogoInfo, addRussianAnime, addCinemetaPairs] = await Promise.all([
         require('./lib/kinoApi').withKinoApi([result.meta]),
         require('./lib/tmdbLogoInfo').lookUpTmdbLogoInfo([result.meta], config),
         require('./lib/shikimori').lookUpShikimori([result.meta]),
+        require('./lib/cinemetaPairs').lookUpCinemetaPairs([result.meta], (imdbId) => require('./lib/imdb').getMetaFromImdb(imdbId, 'series')),
       ]);
-      const [meta] = addRussianAnime(addLogoInfo(withKinopoisk));
+      const [meta] = addCinemetaPairs(addRussianAnime(addLogoInfo(withKinopoisk)));
       if (meta !== result.meta) result = { ...result, meta };
     }
 
