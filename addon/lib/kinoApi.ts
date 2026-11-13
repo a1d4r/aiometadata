@@ -7,7 +7,8 @@ import { getSettleSeconds } from './metaColdStore/config';
 import { envInt } from '../utils/envNumber';
 
 /**
- * Kinopoisk data from Kino API (kinoapi.lampac.dev) on catalog and search tiles.
+ * Kinopoisk data from Kino API (kinoapi.lampac.dev) on catalog and search tiles, and on
+ * the title's own meta (not on the tiles a person or collection page lists).
  *
  * Added after the catalog caches, right before the response, so its own freshness
  * does not depend on how long a row or a search stays in Redis. Raw answers are kept
@@ -622,13 +623,13 @@ async function enrich(metas: any[]): Promise<any[]> {
   return out;
 }
 
-/** Catalog and search tiles with Kinopoisk fields added; the same array when there is nothing to add or no key. */
+/** Catalog and search tiles, or a title's meta, with Kinopoisk fields added; the same array when there is nothing to add or no key. */
 export async function withKinoApi(metas: any[]): Promise<any[]> {
   if (!Array.isArray(metas) || metas.length === 0 || !apiKey()) return metas;
   try {
     return await enrich(metas);
   } catch (error) {
-    storeError(`Tiles left without Kinopoisk data: ${(error as Error).message}`);
+    storeError(`Titles left without Kinopoisk data: ${(error as Error).message}`);
     return metas;
   }
 }
