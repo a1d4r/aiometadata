@@ -8,7 +8,7 @@ const day = (value: string | null | undefined): string | undefined => {
   return match ? match[0] : undefined;
 };
 
-const CREDIT_FIELDS = ['id', 'type', 'name', 'poster', 'background', 'description', 'releaseInfo', 'released', 'year', 'role', 'personTypes', 'episodes'];
+const CREDIT_FIELDS = ['id', 'type', 'name', 'poster', 'background', 'description', 'releaseInfo', 'released', 'year', 'imdbRating', 'role', 'personTypes', 'episodes'];
 
 const creditsLimit = (): number => envInt('PERSON_CREDITS_LIMIT', 100, 1);
 
@@ -51,7 +51,8 @@ export async function personMeta(config: any, id: string): Promise<any | null> {
   let credits: any[] = (await personCredits(config, person)).filter((meta: any) => meta._personTypes?.length);
   if (person.source === 'tmdb') credits = rankTmdbCredits(credits);
   const { creditCards } = require('./titleCards');
-  const cards: any[] = (await creditCards(config, credits)).map((meta: any) => ({
+  const { withImdbRatingOnly } = require('./imdbRatingOnly');
+  const cards: any[] = (await withImdbRatingOnly(await creditCards(config, credits))).map((meta: any) => ({
     ...meta,
     role: creditRole(meta),
     personTypes: personTypes(meta),
