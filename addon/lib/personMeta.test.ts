@@ -24,6 +24,10 @@ stub('getTmdb', {
   personTvCredits: async () => tmdb.shows,
 });
 stub('titleCards', { creditCards: async (_config: any, rows: any[]) => rows.map((row) => ({ ...row })) });
+const RATINGS: Record<string, string> = { tt0108778: '8.9' };
+stub('imdbRatings', {  // read through imdbRatingOnly
+  getImdbRatingStrings: async (ids: string[]) => new Map(ids.filter((id) => RATINGS[id]).map((id) => [id, RATINGS[id]])),
+});
 
 const { personMeta, rankTmdbCredits } = require('./personMeta');
 const { normalizeTmdbPersonCreditsForCache } = require('./tmdbCacheNormalizers');
@@ -129,4 +133,20 @@ test('the filmography is cut at 100 by default', () => {
 test('the credits cache keeps the episode count', () => {
   const normalized = normalizeTmdbPersonCreditsForCache({ id: 1, cast: [{ id: 1, name: 'x', episode_count: 7, credit_id: 'c' }], crew: [] });
   assert.deepEqual(normalized.cast, [{ id: 1, name: 'x', episode_count: 7 }]);
+});
+
+test('a credit carries the IMDb rating of its title, as a catalog tile does', async () => {
+  tmdb.shows.cast = [{ id: 1668, name: 'Друзья', first_air_date: '1994-09-22', vote_count: 8000, character: 'Chandler Bing', episode_count: 236 }];
+  tmdb.movies.cast = [{ id: 2668, title: '17 снова', release_date: '2009-04-17', vote_count: 5000, vote_average: 6.4, character: 'Mike' }];
+  const { creditCards } = require('./titleCards');
+  const cards = (rows: any[]) => rows.map((row) => ({ ...row, ...(row.name === 'Друзья' ? { _imdbId: 'tt0108778' } : {}) }));
+  require.cache[require.resolve('./titleCards')]!.exports.creditCards = async (_c: any, rows: any[]) => cards(rows);
+  try {
+    const meta = await personMeta(RU, 'tmdb:14408');
+    assert.equal(meta.credits.find((c: any) => c.name === 'Друзья').imdbRating, '8.9');
+    // no IMDb id or no rating: no field, and not TMDB's vote_average under an IMDb name
+    assert.equal('imdbRating' in meta.credits.find((c: any) => c.name === '17 снова'), false);
+  } finally {
+    require.cache[require.resolve('./titleCards')]!.exports.creditCards = creditCards;
+  }
 });

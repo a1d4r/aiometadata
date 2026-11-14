@@ -4992,7 +4992,12 @@ const catalogRoute = async function (req, res) {
     const { SIMILAR_CATALOG_ID, similarCatalogMetas } = require('./lib/similarCatalog');
     if (id === SIMILAR_CATALOG_ID) {
       const sourceId = new URLSearchParams(extra || '').get('similar') || '';
-      const metas = sourceId ? await similarCatalogMetas(userUUID, config, type, sourceId) : [];
+      // Melange: the tiles carry TMDB's vote_average as imdbRating; only an IMDb figure goes out.
+      const { withImdbRatingOnly } = require('./lib/imdbRatingOnly');
+      // Melange: recent Russian films often have no digital release in TMDB, so the shared config's
+      // hideUnreleasedDigital would drop them here; rows and search keep them too.
+      const similarConfig = { ...config, hideUnreleasedDigital: false };
+      const metas = sourceId ? await withImdbRatingOnly(await similarCatalogMetas(userUUID, similarConfig, type, sourceId)) : [];
       req.userConfig = config;
       return respond(req, res, { metas: await withCatalogCriticRatings(metas, config, req) });
     }
