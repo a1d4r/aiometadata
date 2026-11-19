@@ -140,6 +140,10 @@ test('lookUpCinemetaPairs: only TMDB-built series with an IMDb id, on a copy', a
   assert.equal(failed.imdbPairs, false);
   assert.equal(failed.videos[0].imdbEpisode, undefined);
   assert.equal((await pairs(metaOf('tt103'), async () => { throw new Error('down'); })).imdbPairs, false);
+  // Cinemeta knows the show but no episode pairs: Melange would show none with imdbPairs true.
+  const none = await pairs(metaOf('tt106'), async () => ({ videos: [cin(1, 1, 400), cin(1, 2, 407)] }));
+  assert.equal(none.imdbPairs, false);
+  assert.equal(none.videos[0].absoluteEpisode, 1);
   // Cinemeta slower than the wait: no pairs this time, and a good late answer is not held against it.
   const slow = () => new Promise((r) => setTimeout(r, 60, { videos: [cin(1, 1, 7)] }));
   assert.equal((await pairs(metaOf('tt104'), slow, 10)).imdbPairs, false);

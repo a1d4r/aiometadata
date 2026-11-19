@@ -12,7 +12,7 @@
  * pack are numbered by). An episode without a match keeps the id the builder gave it (TMDB's
  * numbers, another IMDb title, kitsu:), so a show Cinemeta has not caught up with is asked for as
  * before, and a client tells a confirmed pair by imdbSeason. meta.imdbPairs says whether Cinemeta
- * answered; without it the meta goes out as built.
+ * answered with at least one pair; without it the meta goes out as built.
  *
  * Runs on the way out, after the meta caches, on a copy: the pairs follow Cinemeta's own day-long
  * cache, and nothing here needs a cache cleared when it changes.
@@ -256,7 +256,10 @@ export async function lookUpCinemetaPairs(
     const cinemeta = found.get(imdbId);
     if (!cinemeta || !Array.isArray(cinemeta.videos)) return { ...meta, imdbPairs: false };
     const tmdbId = typeof meta._tmdbId === 'string' && /^\d+$/.test(meta._tmdbId) ? meta._tmdbId : null;
-    return { ...meta, imdbPairs: true, videos: pairVideos(meta.videos, cinemeta.videos, imdbId, tmdbId) };
+    const videos = pairVideos(meta.videos, cinemeta.videos, imdbId, tmdbId);
+    // Melange numbers a show by its pairs alone when imdbPairs is true, leaving out an episode
+    // without one: with no pair at all it would show no episodes, so that counts as no answer.
+    return { ...meta, imdbPairs: videos.some((v) => v?.imdbSeason !== undefined), videos };
   });
 }
 
