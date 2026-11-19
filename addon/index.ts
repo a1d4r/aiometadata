@@ -5623,6 +5623,11 @@ const catalogRoute = async function (req, res) {
       if (metas !== responseData.metas) responseData = { ...responseData, metas };
     }
     if (Array.isArray(responseData?.metas) && req.params.forJellyfin !== '1') {
+      // Melange: IMDb ids matched for TMDB titles without one (imdbMatch.ts); tiles never wait for them.
+      const metas = await require('./lib/imdbMatch').withImdbIds(responseData.metas, config, false);
+      if (metas !== responseData.metas) responseData = { ...responseData, metas };
+    }
+    if (Array.isArray(responseData?.metas) && req.params.forJellyfin !== '1') {
       // Each waits a little for new titles: side by side, the tiles wait for the slower one only.
       const [withKinopoisk, addLogoInfo, addRussianAnime] = await Promise.all([
         require('./lib/kinoApi').withKinoApi(responseData.metas),
@@ -5761,11 +5766,13 @@ const metaRoute = async function (req, res) {
         useShowPoster = catalogConfig.metadata.useShowPosterForUpNext;
       }
     }
+    // Melange: an IMDb id matched to a TMDB title TMDB has no IMDb id for is built from that title (imdbMatch.ts).
+    const builtId = require('./lib/imdbMatch').tmdbIdForMatchedImdb(type, stremioId) ?? stremioId;
     let result = await cacheWrapMetaSmart(
       userUUID,
-      stremioId,
+      builtId,
       async () => {
-        return await getMeta(type, language, stremioId, fullConfig, userUUID, true);
+        return await getMeta(type, language, builtId, fullConfig, userUUID, true);
       },
       undefined,
       cacheOptions,
@@ -5852,6 +5859,12 @@ const metaRoute = async function (req, res) {
       if (criticRatingsWanted(config, req)) result = { ...result, meta: await metaWithCriticRatings(result.meta) };
     }
     if (req.params.forJellyfin !== '1') {
+      // Before the Cinemeta pairs: they need the matched IMDb id.
+      const [withImdb] = await require('./lib/imdbMatch').withImdbIds([result.meta], config, true);
+      if (withImdb !== result.meta) result = { ...result, meta: withImdb };
+      // Opened by its matched IMDb id: that id, even over a guess the builder made (nameToImdb),
+      // or Melange takes the meta for another title's.
+      if (builtId !== stremioId && result.meta) result = { ...result, meta: { ...result.meta, imdb_id: stremioId } };
       const [withKinopoisk, addLogoInfo, addRussianAnime, addCinemetaPairs] = await Promise.all([
         require('./lib/kinoApi').withKinoApi([result.meta]),
         require('./lib/tmdbLogoInfo').lookUpTmdbLogoInfo([result.meta], config),
