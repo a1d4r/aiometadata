@@ -257,12 +257,12 @@ export async function similarTitles(config: any, meta: any, type: 'movie' | 'ser
 
 /** What the chosen source recommends next to a title. Simkl falls back to TMDB when it has nothing for it. */
 async function recommendedTitles(config: any, meta: any, type: 'movie' | 'series'): Promise<any[]> {
-  if (config?.jellyfinSimilarSource === 'simkl') {
+  if (config?.jellyfinSimilarSource === 'simkl' || require('../similarSource').simklPicksSimilar(meta, type)) {
     const { fetchSimklRecommendations } = require('../../utils/simklUtils');
-    const rows: any[] = await fetchSimklRecommendations(
+    const rows: any[] = await require('../similarSource').withinSimklWait(fetchSimklRecommendations(
       { mal: meta?._malId, imdb: meta?._imdbId || meta?.imdb_id, tmdb: meta?._tmdbId },
       type
-    ).catch((error: any) => {
+    )).catch((error: any) => {
       logger.debug(`Simkl similar titles unavailable for ${meta?.id}: ${error?.message || error}`);
       return [];
     });
