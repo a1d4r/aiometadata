@@ -187,8 +187,11 @@ const simklImage = (path: string | null | undefined, kind: 'posters' | 'fanart',
 function metaFromSimklRow(row: any): any | null {
   const ids = row?.ids || {};
   const type: 'movie' | 'series' = row?.type === 'movie' || row?.anime_type === 'movie' ? 'movie' : 'series';
-  const malId = row?.type === 'anime' ? Number(ids.mal) : NaN;
-  const id = malId > 0 ? `mal:${malId}` : ids.tmdb ? `tmdb:${ids.tmdb}` : /^tt\d+$/.test(String(ids.imdb || '')) ? String(ids.imdb) : null;
+  // Melange: never by a MAL id. An anime id builds the card on the anime path and stores it under
+  // the title's IMDb id, so every later meta of that title got it, a movie for up to 180 days from
+  // the cold store (as kitsu: did on 13.11.2026). The IMDb id first: Melange opens a card by it
+  // first, so the card built here is the one it reads. With neither id Melange cannot open it.
+  const id = /^tt\d+$/.test(String(ids.imdb || '')) ? String(ids.imdb) : ids.tmdb ? `tmdb:${ids.tmdb}` : null;
   if (!id) return null;
   const year = row.year ? String(row.year) : '';
   return {

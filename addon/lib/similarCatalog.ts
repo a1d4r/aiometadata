@@ -37,8 +37,13 @@ export async function similarCatalogMetas(userUUID: string, config: any, type: s
   const size = Number(getSetting('SIMILAR_CATALOG_SIZE')) || 20;
   const capped = hasAgeRatingCap(config);
   const unrated = allowsUnrated(config);
-  const built = await titleCards(config, userUUID, capped ? rows : rows.slice(0, size));
+  const asked = capped ? rows : rows.slice(0, size);
+  const built = await titleCards(config, userUUID, asked);
   return built
+    // Melange: a Simkl row whose card did not build goes out as Simkl gave it, an English name and
+    // art on wsrv.nl, which Caddy does not pass; often it is of a type TMDB does not have (an OVA
+    // film Simkl calls a series), so Melange opened an empty card.
+    .filter((meta: any, i: number) => meta !== asked[i] || meta?._artSource !== 'simkl')
     .filter((meta: any) => meta?.id && meta.id !== source.id)
     .filter((meta: any) => !capped || passesAgeRating(meta.app_extras?.certification || meta.certification || null, meta.type || type, String(config.ageRating), unrated))
     .slice(0, size)
