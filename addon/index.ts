@@ -5309,7 +5309,7 @@ const catalogRoute = async function (req, res) {
         // Use search-specific cache wrapper
         const searchKey = `${cleanId}:${originalSearchId}:${searchType}:${stableStringify(searchExtraArgs)}`;
 
-        responseData = await cacheWrapSearch(userUUID, searchKey, async () => {
+        const head = cacheWrapSearch(userUUID, searchKey, async () => {
           const searchResult = await getSearch(cleanId, searchType, language, searchExtraArgs, config);
           if (searchResult.error) {
             consola.error(`[SEARCH] ${cleanId} failed: ${searchResult.error}`);
@@ -5317,6 +5317,12 @@ const catalogRoute = async function (req, res) {
           }
           return { metas: searchResult.metas || [] };
         }, searchEngine, cacheOptions);
+
+        // Melange: titles Kinopoisk finds go after TMDB's own (kpSearch.ts).
+        responseData = await require('./lib/kpSearch').withKpTail(head, {
+          userUUID, searchKey, engine: searchEngine, type: searchType, page: searchPage,
+          query: searchExtraArgs.search, cleanId, language, config, cacheOptions,
+        });
       }
       } else if (cleanId.startsWith('custom.') || cleanId.startsWith('stremthru.')) {
       const { genre: genreName } = extraArgs;
