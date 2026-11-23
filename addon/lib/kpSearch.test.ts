@@ -6,7 +6,7 @@
  */
 import { describe, test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendKpTail, askKp, classifyKpTail, kpTailOf, wantsKpTail, withKpTail, type KpHit, type TailContext, type TailDeps } from './kpSearch';
+import { appendKpTail, askKp, classifyKpTail, kpTailOf, orderBySearch, wantsKpTail, withKpTail, words, wordxKey, type KpHit, type TailContext, type TailDeps } from './kpSearch';
 
 const tracked: Array<[string, boolean]> = [];
 // The real tracker opens Redis; the module requires it lazily, so a stand-in in the cache is enough.
@@ -20,7 +20,7 @@ const tracked: Array<[string, boolean]> = [];
   require.cache[file] = mod;
 }
 
-const hit = (tt: string, kw: Partial<KpHit> = {}): KpHit => ({ kp: 1, tt, tmdb: null, name: null, year: null, ...kw });
+const hit = (tt: string, kw: Partial<KpHit> = {}): KpHit => ({ kp: 1, tt, tmdb: null, name: null, nameEn: null, year: null, votes: 0, ...kw });
 const tile = (id: string, kw: any = {}) => ({ id, imdb_id: id.startsWith('tt') ? id : undefined, type: 'movie', name: `TMDB ${id}`, year: '2000', ...kw });
 
 describe('which searches get Kinopoisk titles', () => {
@@ -54,7 +54,7 @@ describe("kp's answer", () => {
     const fake = (async (url: any, init: any) => {
       sent = { url, body: JSON.parse(init.body) };
       return new Response(JSON.stringify({ complete: true, data: [
-        { kp: 338622, tt: 'tt0166675', tmdb: null, name: 'Карл XII', year: 1974, votes: 28, exact: true },
+        { kp: 338622, tt: 'tt0166675', tmdb: null, name: 'Карл XII', nameEn: 'Karl XII', year: 1974, votes: 28 },
         { kp: 2, tt: '0166675' }, { kp: 'x', tt: 'tt0000001' }, { kp: 4, tt: 'tt123' }, null,
         { kp: 3, tt: 'tt0000003', tmdb: 33, name: ' ', year: '1990', votes: 5 },
       ] }), { status: 200 });
@@ -64,8 +64,8 @@ describe("kp's answer", () => {
     assert.equal(got.complete, true);
     assert.deepEqual(tracked.at(-1), ['kp', true], "in the providers' stats as kp");
     assert.deepEqual(got.hits, [
-      { kp: 338622, tt: 'tt0166675', tmdb: null, name: 'Карл XII', year: 1974 },
-      { kp: 3, tt: 'tt0000003', tmdb: 33, name: null, year: null },
+      { kp: 338622, tt: 'tt0166675', tmdb: null, name: 'Карл XII', nameEn: 'Karl XII', year: 1974, votes: 28 },
+      { kp: 3, tt: 'tt0000003', tmdb: 33, name: null, nameEn: null, year: null, votes: 5 },
     ], 'a tt TMDB search would not take for an id is no hit');
   });
 
@@ -121,7 +121,7 @@ describe('the added tiles', () => {
       return tmdbTile(tt);
     });
     assert.deepEqual([got.metas.map((m: any) => m.id), got.kpPartial], [['tt0000001'], true]);
-    assert.deepEqual(await kpTailOf([], { complete: false, hits: [] }, 'movie', async () => ({ known: false, meta: null })), { metas: [], kpPartial: true });
+    assert.deepEqual(await kpTailOf([], { complete: false, hits: [] }, 'movie', async () => ({ known: false, meta: null })), { metas: [], hits: [], kpPartial: true });
   });
 
   test('at most 20 TMDB lookups', async () => {
@@ -170,8 +170,9 @@ describe('the search response', () => {
   test("TMDB's results, then Kinopoisk's, in an entry of their own", async () => {
     const d = deps();
     const got = await withKpTail(Promise.resolve({ metas: [tile('tt0000001')] }), ctx(), d);
-    assert.deepEqual(got.metas.map((m: any) => [m.id, m.name]), [['tt0000001', 'TMDB tt0000001'], ['tt0166675', 'Карл XII']]);
-    assert.deepEqual(d.keys, ['kp-tail:search:k']);
+    assert.deepEqual(got.response.metas.map((m: any) => [m.id, m.name]), [['tt0000001', 'TMDB tt0000001'], ['tt0166675', 'Карл XII']]);
+    assert.deepEqual(got.finish!(got.response.metas).map((m: any) => m.id), ['tt0166675', 'tt0000001'], 'sorted on the way out');
+    assert.deepEqual(d.keys, ['kp-tail:v2:search:k']);
     assert.equal(d.options[0].resultClassifier, classifyKpTail);
     assert.equal(d.options[0].enableErrorCaching, false);
   });
@@ -179,7 +180,7 @@ describe('the search response', () => {
   test('a search it does not take is the head as it is', async () => {
     const d = deps();
     const head = { metas: [tile('tt0000001')] };
-    assert.equal(await withKpTail(Promise.resolve(head), ctx({ page: 2 }), d), head);
+    assert.deepEqual(await withKpTail(Promise.resolve(head), ctx({ page: 2 }), d), { response: head, finish: null });
     assert.deepEqual(d.keys, []);
   });
 
@@ -191,21 +192,65 @@ describe('the search response', () => {
     await new Promise((r) => setImmediate(r));
     assert.equal(asked, true, 'before TMDB answered');
     release({ metas: [] });
-    assert.deepEqual((await got).metas, []);
+    assert.deepEqual(await got, { response: { metas: [] }, finish: null }, 'no hits: TMDB as it is');
   });
 
   test('late Kinopoisk titles: the head alone, on time', async () => {
     const started = Date.now();
     const got = await withKpTail(Promise.resolve({ metas: [tile('tt0000001')] }), ctx(),
       deps({ waitMs: 50, askKp: () => new Promise((r) => setTimeout(() => r({ complete: true, hits: [] }), 500)) }));
-    assert.deepEqual(got.metas.map((m: any) => m.id), ['tt0000001']);
+    assert.deepEqual([got.response.metas.map((m: any) => m.id), got.finish], [['tt0000001'], null]);
     assert.ok(Date.now() - started < 400);
   });
 
   test('a failing tail never fails the search; a failing head fails it as before', async () => {
     const got = await withKpTail(Promise.resolve({ metas: [tile('tt0000001')] }), ctx(),
       deps({ cacheWrapSearch: async () => { throw new Error('redis'); } }));
-    assert.deepEqual(got.metas.map((m: any) => m.id), ['tt0000001']);
+    assert.deepEqual([got.response.metas.map((m: any) => m.id), got.finish], [['tt0000001'], null]);
     await assert.rejects(withKpTail(Promise.reject(new Error('tmdb')), ctx(), deps()), /tmdb/);
+  });
+});
+
+describe('wordx', () => {
+  // The same cases as WordxTest in melange-vps server/kp/test_kp.py: kp.py's copy must agree.
+  test("names as kp.py compares them", () => {
+    assert.equal(words(' Кошки — это сволочи! '), 'кошки это сволочи');
+    assert.equal(words('Ёлки 2'), 'елки 2');
+    assert.equal(words(null), '');
+  });
+
+  test('groups: every word whole, a substring, the rest; then votes, the exact name +1', () => {
+    assert.equal(wordxKey('Карл', ['Карл XII'], 28)[0], 0);
+    assert.equal(wordxKey('Карл', ['Свидание Карла'], 28)[0], 1, 'no cases: «Карла» is a substring');
+    assert.equal(wordxKey('Карл', ['Малыш и Карлсон'], 28)[0], 1);
+    assert.equal(wordxKey('Карл', ['День курка'], 561_000)[0], 2);
+    assert.equal(wordxKey('мастер маргарита', ['Мастер и Маргарита'], 0)[0], 0, 'all words of the query, in any order');
+    assert.equal(wordxKey('!!!', ['Что угодно'], 0)[0], 2, 'no words: no group');
+    assert.ok(wordxKey('Брат', ['Брат'], 500)[1] < wordxKey('Брат', ['Брат Якудзы'], 4000)[1], 'exact ×10 the votes');
+  });
+
+  test('«Брат»: Брат 1997 first; TMDB order where the keys are equal', () => {
+    const metas = [
+      tile('tt3863552', { name: 'Брат Баджранги', kpVotes: 20_000 }), tile('tt0222851', { name: 'Брат Якудзы', kpVotes: 30_000 }),
+      tile('tt6388082', { name: 'Брат', kpVotes: 500 }), tile('tt0000001', { name: 'Без слова' }),
+      tile('tt0118767', { name: 'Брат', kpVotes: 600_000 }), tile('tt0238883', { name: 'Брат 2', kpVotes: '500000' }),
+      tile('tt0000002', { name: 'Тоже без', kpVotes: 0 }),
+    ];
+    assert.deepEqual(orderBySearch(metas, [], 'Брат', new Set()).map((m: any) => m.id),
+      ['tt0118767', 'tt0238883', 'tt0222851', 'tt3863552', 'tt6388082', 'tt0000001', 'tt0000002']);
+  });
+
+  test("votes and names from kp where the tile has none; an added tile with a TMDB tile's kpId goes", () => {
+    const metas = [
+      tile('tt0000001', { name: 'Karl XII', kpId: '1' }),
+      tile('tt0000002', { name: 'Карл и Берта', kpVotes: 900, kpId: '2' }),
+      tile('tt0000003', { name: 'Карл XII', kpId: '2' }),
+    ];
+    const hits = [hit('tt0000001', { kp: 1, name: 'Карл XII', votes: 5000 })];
+    assert.deepEqual(orderBySearch(metas, hits, 'Карл', new Set(['tt0000003'])).map((m: any) => m.id), ['tt0000001', 'tt0000002'],
+      "kp's Russian name puts the first in the word group with kp's votes; the third is the second again");
+    const twice = [tile('tt0000009', { name: 'Карл', kpVotes: 1 }), tile('tt0000009', { name: 'Карл XII', kpVotes: 9000 })];
+    assert.deepEqual(orderBySearch(twice, [], 'Карл', new Set(['tt0000009'])).map((m: any) => m.name), ['Карл'],
+      'an id twice (the hooks gave a TMDB tile the tt of an added one): the first, TMDB\'s, stays');
   });
 });

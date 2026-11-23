@@ -5,13 +5,17 @@ import { mapWithLimit } from '../utils/concurrency';
 /**
  * Melange: titles Kinopoisk finds for a search that TMDB does not know by their Russian name
  * («Карл XII», 1974, is only «Karl XII» at TMDB). The kp service of Melange VPS (POST /search) asks
- * kinopoiskapiunofficial.tech for one page and answers its titles of the type that have an IMDb id,
- * those named exactly as the query first, then by Kinopoisk votes. They go after TMDB's own results,
- * on the first page of a TMDB search only, each the tile TMDB search makes of its tt, named as
- * Kinopoisk names it in Russian. TMDB's results are never moved or dropped (append_exact, the
- * owner's rule of 23.11.2026; why: dune-plugins knowledge/melange/research/search-ru-ranking-2026-11-23.md).
+ * kinopoiskapiunofficial.tech for three pages and answers its titles of the type that have an IMDb id.
+ * On the first page of a TMDB search they join TMDB's own results, each the tile TMDB search makes of
+ * its tt, named as Kinopoisk names it in Russian, and the whole page is sorted by wordx (the owner's
+ * rule of 23.11.2026, for one-word voice searches: «Карл» finds «Карл XII»; why: dune-plugins
+ * knowledge/melange/research/search-ru-ranking-2026-11-23.md): titles with every word of the query as a
+ * whole word of a name, then with the query inside a name, then the rest; within a group by
+ * log10(Kinopoisk votes + 10), one more for a name that is the query exactly; else as they came (TMDB's,
+ * then Kinopoisk's). The votes are the tile's kpVotes, so the page is sorted on the way out, after
+ * kinoApi.ts gave them (orderBySearch); a title Kinopoisk found has its votes from kp as well.
  *
- * The added tiles are a search entry of their own next to TMDB's (`kp-tail:` + its key): 12 h like it,
+ * The added tiles are a search entry of their own next to TMDB's (TAIL_KEY + its key): 12 h like it,
  * a few minutes when kp or TMDB could not answer in full, so a slow moment is not kept for half a day.
  * A response waits for them TAIL_WAIT_MS at most; late ones still fill the entry.
  * Off without KP_SERVICE_URL (the same variable as Kinopoisk data on tiles, kinoApi.ts).
@@ -23,7 +27,10 @@ const TIMEOUT_MS = 5000; // kp waits for kpu 4 s
 const TAIL_WAIT_MS = 6000; // a response waits for the added tiles this long from its start; Melange gives a search 10 s
 const PARTIAL_TTL_S = 300;
 const MAX_QUERY = 100; // kp's limit
-const MAX_ADDED = 20; // one page of kpu is 20 titles of both types
+const MAX_ADDED = 20; // TMDB lookups a search, the first in kp's order: Melange looks at the first 20
+// The search entry of the added tiles and kp's hits. Any change of what the entry holds (a tile, its
+// name, the fields of hits) raises the version: the old entries are then never read, nothing to clear.
+const TAIL_KEY = 'kp-tail:v2:';
 // TMDB and Kinopoisk put a series' or an old film's year 1-3 apart; a title under a tt that is
 // another title at TMDB was 15 years off (dune-plugins knowledge/melange/research/card-ru-fallback-2026-11-23.md).
 const YEAR_SLACK = 3;
@@ -33,7 +40,9 @@ export interface KpHit {
   tt: string;
   tmdb: number | null;
   name: string | null;
+  nameEn: string | null;
   year: number | null;
+  votes: number;
 }
 
 export interface KpAnswer {
@@ -80,7 +89,9 @@ function hitOf(x: any): KpHit | null {
     tt: x.tt,
     tmdb: Number.isInteger(x.tmdb) ? x.tmdb : null,
     name: typeof x.name === 'string' && x.name.trim() ? x.name.trim() : null,
+    nameEn: typeof x.nameEn === 'string' && x.nameEn.trim() ? x.nameEn.trim() : null,
     year: Number.isInteger(x.year) ? x.year : null,
+    votes: Number.isInteger(x.votes) && x.votes > 0 ? x.votes : 0,
   };
 }
 
@@ -120,14 +131,78 @@ function idsOf(meta: any): string[] {
   return [meta?.id, meta?.imdb_id, meta?._tmdbId ? `tmdb:${meta._tmdbId}` : null].filter(Boolean).map(String);
 }
 
+/** A name as a search compares it: lower case, ё as е, every run of signs a space (kp.py's words). */
+export function words(name: unknown): string {
+  if (typeof name !== 'string') return '';
+  return name.toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().split(/\s+/).filter(Boolean).join(' ');
+}
+
+/** wordx's key of a title (kp.py's wordx): [group, -score], the smaller first. */
+export function wordxKey(query: string, names: unknown[], votes: number): [number, number] {
+  const q = words(query);
+  const qw = q ? q.split(' ') : [];
+  let group = 2;
+  let exact = false;
+  for (const name of names.map(words).filter(Boolean)) {
+    exact = exact || name === q;
+    const nw = new Set(name.split(' '));
+    group = Math.min(group, qw.length && qw.every((w) => nw.has(w)) ? 0 : q && name.includes(q) ? 1 : 2);
+  }
+  return [group, -(Math.log10(Math.max(votes, 0) + 10) + (exact ? 1 : 0))];
+}
+
+/** Items in wordx's order; equal keys keep their order (Array.sort is stable). */
+function byWordx<T>(query: string, items: Array<{ item: T; names: unknown[]; votes: number }>): T[] {
+  const keyed = items.map((x) => ({ item: x.item, key: wordxKey(query, x.names, x.votes) }));
+  keyed.sort((a, b) => a.key[0] - b.key[0] || a.key[1] - b.key[1]);
+  return keyed.map((x) => x.item);
+}
+
+/** kp's hits by every id a tile may carry: tt, TMDB id, Kinopoisk id. */
+function hitIndex(hits: KpHit[]): (meta: any) => KpHit | undefined {
+  const by = new Map<string, KpHit>();
+  for (const h of hits) {
+    for (const key of [h.tt, h.tmdb ? `tmdb:${h.tmdb}` : null, `kp:${h.kp}`]) if (key && !by.has(key)) by.set(key, h);
+  }
+  return (meta) => [...idsOf(meta), meta?.kpId ? `kp:${meta.kpId}` : null].map((k) => (k ? by.get(k) : undefined)).find(Boolean);
+}
+
+function entryOf(meta: any, hit: KpHit | undefined) {
+  const votes = Number(meta?.kpVotes);
+  return {
+    item: meta,
+    names: [meta?.name, meta?.originalTitle, meta?.englishTitle, hit?.name, hit?.nameEn],
+    votes: Number.isFinite(votes) && votes > 0 ? votes : hit?.votes || 0,
+  };
+}
+
 /**
- * The tiles of kp's titles that TMDB's own results do not have, from hydrate(tt). A tile more than
+ * The first page of a search in wordx's order, on the way out (the tiles carry kpVotes and kpId now).
+ * The same title twice goes, TMDB's tile kept: an added tile with the Kinopoisk id of one of TMDB's,
+ * or any tile with an id seen before (a TMDB tile the hooks gave the tt of an added one).
+ */
+export function orderBySearch(metas: any[], hits: KpHit[], query: string, added: Set<string>): any[] {
+  const hitOf = hitIndex(hits);
+  const tmdbKp = new Set(metas.filter((m) => !added.has(m?.id) && m?.kpId).map((m) => String(m.kpId)));
+  const seen = new Set<string>();
+  const kept = metas.filter((m) => {
+    if (added.has(m?.id) && m?.kpId && tmdbKp.has(String(m.kpId))) return false;
+    if (m?.id && seen.has(m.id)) return false;
+    if (m?.id) seen.add(m.id);
+    return true;
+  });
+  return byWordx(query, kept.map((m) => entryOf(m, hitOf(m))));
+}
+
+/**
+ * The tiles of kp's titles that TMDB's own results do not have, the first MAX_ADDED in kp's order
+ * (wordx's on Kinopoisk's names and votes). From hydrate(tt). A tile more than
  * YEAR_SLACK years off kp's is another title under the same tt, so it is not added. A tt TMDB does not
  * know at all («Леди Мэр», 2003) is a tile of what Kinopoisk says, its id, name and year (its meta is
  * AIOMetadata's IMDb one). A tt TMDB knows as the other type, or whose tile TMDB search leaves out
  * (adult), adds nothing. hydrate throwing (TMDB failed) makes the answer partial.
  */
-export async function kpTailOf(head: any[], answer: KpAnswer, type: 'movie' | 'series', hydrate: (tt: string) => Promise<Hydrated>): Promise<{ metas: any[]; kpPartial?: true }> {
+export async function kpTailOf(head: any[], answer: KpAnswer, type: 'movie' | 'series', hydrate: (tt: string) => Promise<Hydrated>): Promise<{ metas: any[]; hits: KpHit[]; kpPartial?: true }> {
   const known = new Set(head.flatMap(idsOf));
   const todo = answer.hits.filter((h) => !known.has(h.tt) && !(h.tmdb && known.has(`tmdb:${h.tmdb}`))).slice(0, MAX_ADDED);
   let partial = !answer.complete;
@@ -152,7 +227,7 @@ export async function kpTailOf(head: any[], answer: KpAnswer, type: 'movie' | 's
     idsOf(meta).forEach((id) => known.add(id));
     metas.push(meta);
   }
-  return partial ? { metas, kpPartial: true } : { metas };
+  return partial ? { metas, hits: answer.hits, kpPartial: true } : { metas, hits: answer.hits };
 }
 
 function kpOnlyTile(hit: KpHit, type: 'movie' | 'series'): any {
@@ -209,18 +284,27 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
+/** What a search answers before the hooks on the way out, and how its page is sorted after them. */
+export interface Searched {
+  response: any;
+  finish: ((metas: any[]) => any[]) | null;
+}
+
 /**
  * The search response: head (TMDB's search entry, a promise) and, for a search wantsKpTail takes,
- * the tiles Kinopoisk adds. kp is asked while TMDB searches. Never rejects for the added tiles.
+ * the tiles Kinopoisk adds, with `finish` to sort the page once the tiles have their votes. kp is
+ * asked while TMDB searches. Never rejects for the added tiles; without kp's answer, finish is null
+ * and TMDB's order stays.
  */
-export async function withKpTail(head: Promise<any>, ctx: TailContext, deps: TailDeps = DEPS): Promise<any> {
-  if (!wantsKpTail(ctx.engine, ctx.type, ctx.page, ctx.query)) return head;
+export async function withKpTail(head: Promise<any>, ctx: TailContext, deps: TailDeps = DEPS): Promise<Searched> {
+  if (!wantsKpTail(ctx.engine, ctx.type, ctx.page, ctx.query)) return { response: await head, finish: null };
   const started = Date.now();
   const type = ctx.type as 'movie' | 'series';
-  const tail = deps.cacheWrapSearch(ctx.userUUID, `kp-tail:${ctx.searchKey}`, async () => {
-    const answer = deps.askKp(String(ctx.query), type);
+  const query = String(ctx.query);
+  const tail = deps.cacheWrapSearch(ctx.userUUID, `${TAIL_KEY}${ctx.searchKey}`, async () => {
+    const answer = deps.askKp(query, type);
     const tmdb = await head.catch(() => null);
-    if (!Array.isArray(tmdb?.metas)) return { metas: [], kpPartial: true };
+    if (!Array.isArray(tmdb?.metas)) return { metas: [], hits: [], kpPartial: true };
     return kpTailOf(tmdb.metas, await answer, type, (tt) => deps.hydrate(tt, ctx));
   }, ctx.engine, { ...ctx.cacheOptions, enableErrorCaching: false, resultClassifier: classifyKpTail })
     .catch((error: any) => {
@@ -228,7 +312,10 @@ export async function withKpTail(head: Promise<any>, ctx: TailContext, deps: Tai
       return null;
     });
   const response = await head;
-  const added = await within(tail, deps.waitMs - (Date.now() - started));
-  if (!Array.isArray(added?.metas) || !added.metas.length || !Array.isArray(response?.metas)) return response;
-  return { ...response, metas: appendKpTail(response.metas, added.metas) };
+  const got = await within(tail, deps.waitMs - (Date.now() - started));
+  const hits: KpHit[] = Array.isArray(got?.hits) ? got.hits : [];
+  if (!Array.isArray(response?.metas) || !hits.length) return { response, finish: null };
+  const metas = appendKpTail(response.metas, Array.isArray(got?.metas) ? got.metas : []);
+  const added = new Set<string>(metas.slice(response.metas.length).map((m: any) => m.id));
+  return { response: { ...response, metas }, finish: (out) => orderBySearch(out, hits, query, added) };
 }

@@ -5206,6 +5206,7 @@ const catalogRoute = async function (req, res) {
   
   try {
     let responseData;
+    let sortSearchPage = null; // Melange: the order of a search page with Kinopoisk's titles (kpSearch.ts)
     // Set by any branch whose handler already ran applyCatalogFilters internally
     // (external addon catalogs filter before computing their pagination cursor).
     let filtersAlreadyApplied = false;
@@ -5319,10 +5320,12 @@ const catalogRoute = async function (req, res) {
         }, searchEngine, cacheOptions);
 
         // Melange: titles Kinopoisk finds go after TMDB's own (kpSearch.ts).
-        responseData = await require('./lib/kpSearch').withKpTail(head, {
+        const searched = await require('./lib/kpSearch').withKpTail(head, {
           userUUID, searchKey, engine: searchEngine, type: searchType, page: searchPage,
           query: searchExtraArgs.search, cleanId, language, config, cacheOptions,
         });
+        responseData = searched.response;
+        sortSearchPage = searched.finish;
       }
       } else if (cleanId.startsWith('custom.') || cleanId.startsWith('stremthru.')) {
       const { genre: genreName } = extraArgs;
@@ -5642,6 +5645,11 @@ const catalogRoute = async function (req, res) {
       ]);
       const metas = addRussianAnime(addLogoInfo(withKinopoisk));
       if (metas !== responseData.metas) responseData = { ...responseData, metas };
+    }
+
+    if (sortSearchPage && Array.isArray(responseData?.metas)) {
+      // Melange: sorted once the tiles carry their Kinopoisk votes (kpSearch.ts).
+      responseData = { ...responseData, metas: sortSearchPage(responseData.metas) };
     }
 
     const httpCacheOpts = { cacheMaxAge: 0, staleRevalidate: 5 * 60 }; // No cache for regular catalogs, 5 min stale-while-revalidate
