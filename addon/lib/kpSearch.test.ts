@@ -20,7 +20,7 @@ const tracked: Array<[string, boolean]> = [];
   require.cache[file] = mod;
 }
 
-const hit = (tt: string, kw: Partial<KpHit> = {}): KpHit => ({ kp: 1, tt, tmdb: null, name: null, nameEn: null, year: null, votes: 0, ...kw });
+const hit = (tt: string, kw: Partial<KpHit> = {}): KpHit => ({ kp: 1, tt, tmdb: null, name: null, nameEn: null, year: null, votes: 0, poster: null, ...kw });
 const tile = (id: string, kw: any = {}) => ({ id, imdb_id: id.startsWith('tt') ? id : undefined, type: 'movie', name: `TMDB ${id}`, year: '2000', ...kw });
 
 describe('which searches get Kinopoisk titles', () => {
@@ -54,9 +54,9 @@ describe("kp's answer", () => {
     const fake = (async (url: any, init: any) => {
       sent = { url, body: JSON.parse(init.body) };
       return new Response(JSON.stringify({ complete: true, data: [
-        { kp: 338622, tt: 'tt0166675', tmdb: null, name: 'Карл XII', nameEn: 'Karl XII', year: 1974, votes: 28 },
+        { kp: 338622, tt: 'tt0166675', tmdb: null, name: 'Карл XII', nameEn: 'Karl XII', year: 1974, votes: 28, poster: 'https://avatars.mds.yandex.net/get-kinopoisk-image/1/ef9c426d-f913-49aa-9de4-dc3d83f1f71b/300x450' },
         { kp: 2, tt: '0166675' }, { kp: 'x', tt: 'tt0000001' }, { kp: 4, tt: 'tt123' }, null,
-        { kp: 3, tt: 'tt0000003', tmdb: 33, name: ' ', year: '1990', votes: 5 },
+        { kp: 3, tt: 'tt0000003', tmdb: 33, name: ' ', year: '1990', votes: 5, poster: 'http://p.example/x.jpg' },
       ] }), { status: 200 });
     }) as typeof fetch;
     const got = await askKp(' Леди Мэр ', 'series', fake);
@@ -64,9 +64,9 @@ describe("kp's answer", () => {
     assert.equal(got.complete, true);
     assert.deepEqual(tracked.at(-1), ['kp', true], "in the providers' stats as kp");
     assert.deepEqual(got.hits, [
-      { kp: 338622, tt: 'tt0166675', tmdb: null, name: 'Карл XII', nameEn: 'Karl XII', year: 1974, votes: 28 },
-      { kp: 3, tt: 'tt0000003', tmdb: 33, name: null, nameEn: null, year: null, votes: 5 },
-    ], 'a tt TMDB search would not take for an id is no hit');
+      { kp: 338622, tt: 'tt0166675', tmdb: null, name: 'Карл XII', nameEn: 'Karl XII', year: 1974, votes: 28, poster: 'https://avatars.mds.yandex.net/get-kinopoisk-image/1/ef9c426d-f913-49aa-9de4-dc3d83f1f71b/300x450' },
+      { kp: 3, tt: 'tt0000003', tmdb: 33, name: null, nameEn: null, year: null, votes: 5, poster: null },
+    ], "a tt TMDB search would not take for an id is no hit; a poster only Kinopoisk's on Yandex");
   });
 
   test('a failure is an empty partial answer', async () => {
@@ -91,7 +91,7 @@ describe('the added tiles', () => {
       hit('tt0000002', { tmdb: 77, name: 'Дубль по TMDB id' }),
       hit('tt0000003', { name: 'Другой тайтл под тем же tt', year: 2017 }),
       hit('tt0000004', { year: 2016 }),
-      hit('tt0000006', { name: 'TMDB не знает', year: 2003 }),
+      hit('tt0000006', { name: 'TMDB не знает', year: 2003, poster: 'https://avatars.mds.yandex.net/get-kinopoisk-image/6/ef9c426d-f913-49aa-9de4-dc3d83f1f71b/300x450' }),
       hit('tt0000008'),
       hit('tt0000007', { name: 'TMDB даёт тайтл из выдачи' }),
       hit('tt0000009', { name: 'TMDB знает другим типом' }),
@@ -110,7 +110,7 @@ describe('the added tiles', () => {
       'no TMDB lookup for what TMDB found');
     assert.deepEqual(got.metas.map((m: any) => [m.id, m.name]), [['tt0166675', 'Карл XII'], ['tt0000004', 'Karl XII'], ['tt0000006', 'TMDB не знает']],
       "a year 4 off is another title, 3 is not; no Russian name keeps TMDB's; unknown to TMDB without a name: none");
-    assert.deepEqual(got.metas[2], { id: 'tt0000006', imdb_id: 'tt0000006', type: 'series', name: 'TMDB не знает', year: '2003', releaseInfo: '2003' });
+    assert.deepEqual(got.metas[2], { id: 'tt0000006', imdb_id: 'tt0000006', type: 'series', name: 'TMDB не знает', poster: 'https://avatars.mds.yandex.net/get-kinopoisk-image/6/ef9c426d-f913-49aa-9de4-dc3d83f1f71b/300x450', year: '2003', releaseInfo: '2003' });
     assert.equal(got.kpPartial, undefined);
     assert.equal(head.length, 3, 'TMDB results untouched');
   });
@@ -172,7 +172,7 @@ describe('the search response', () => {
     const got = await withKpTail(Promise.resolve({ metas: [tile('tt0000001')] }), ctx(), d);
     assert.deepEqual(got.response.metas.map((m: any) => [m.id, m.name]), [['tt0000001', 'TMDB tt0000001'], ['tt0166675', 'Карл XII']]);
     assert.deepEqual(got.finish!(got.response.metas).map((m: any) => m.id), ['tt0166675', 'tt0000001'], 'sorted on the way out');
-    assert.deepEqual(d.keys, ['kp-tail:v2:search:k']);
+    assert.deepEqual(d.keys, ['kp-tail:v3:search:k']);
     assert.equal(d.options[0].resultClassifier, classifyKpTail);
     assert.equal(d.options[0].enableErrorCaching, false);
   });

@@ -400,6 +400,7 @@ function applyImageCachePrefix(data) {
     if (url.startsWith(prefix)) return url;
     if (!/^https?:\/\//i.test(url)) return url;
     if (selfOrigin && url.startsWith(selfOrigin)) return url;
+    if (require('./lib/kpCard').isKpPoster(url)) return url; // Melange: Kinopoisk's, straight from Yandex's CDN
     return posterCacheConfig.buildCachedUrl(prefix, imageClass, url);
   };
 
@@ -5813,6 +5814,9 @@ const metaRoute = async function (req, res) {
         );
       }
     }
+
+    // Melange: Kinopoisk's name, poster and description for IMDb's stand-in or no meta (kpCard.ts).
+    if (req.params.forJellyfin !== '1') result = await require('./lib/kpCard').withKpCard(result, type, stremioId);
 
     if (!result || !result.meta) {
       return respond(req, res, { meta: null });

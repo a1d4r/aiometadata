@@ -1,6 +1,7 @@
 import consola from 'consola';
 import { yearOf } from './kinoApi';
 import { mapWithLimit } from '../utils/concurrency';
+import { isKpPoster, YEAR_SLACK } from './kpCard';
 
 /**
  * Melange: titles Kinopoisk finds for a search that TMDB does not know by their Russian name
@@ -30,10 +31,7 @@ const MAX_QUERY = 100; // kp's limit
 const MAX_ADDED = 20; // TMDB lookups a search, the first in kp's order: Melange looks at the first 20
 // The search entry of the added tiles and kp's hits. Any change of what the entry holds (a tile, its
 // name, the fields of hits) raises the version: the old entries are then never read, nothing to clear.
-const TAIL_KEY = 'kp-tail:v2:';
-// TMDB and Kinopoisk put a series' or an old film's year 1-3 apart; a title under a tt that is
-// another title at TMDB was 15 years off (dune-plugins knowledge/melange/research/card-ru-fallback-2026-11-23.md).
-const YEAR_SLACK = 3;
+const TAIL_KEY = 'kp-tail:v3:';
 
 export interface KpHit {
   kp: number;
@@ -43,6 +41,7 @@ export interface KpHit {
   nameEn: string | null;
   year: number | null;
   votes: number;
+  poster: string | null;
 }
 
 export interface KpAnswer {
@@ -92,6 +91,7 @@ function hitOf(x: any): KpHit | null {
     nameEn: typeof x.nameEn === 'string' && x.nameEn.trim() ? x.nameEn.trim() : null,
     year: Number.isInteger(x.year) ? x.year : null,
     votes: Number.isInteger(x.votes) && x.votes > 0 ? x.votes : 0,
+    poster: isKpPoster(x.poster) ? x.poster : null, // a tile's 300x450 (kpCard.ts)
   };
 }
 
@@ -198,8 +198,8 @@ export function orderBySearch(metas: any[], hits: KpHit[], query: string, added:
  * The tiles of kp's titles that TMDB's own results do not have, the first MAX_ADDED in kp's order
  * (wordx's on Kinopoisk's names and votes). From hydrate(tt). A tile more than
  * YEAR_SLACK years off kp's is another title under the same tt, so it is not added. A tt TMDB does not
- * know at all («Леди Мэр», 2003) is a tile of what Kinopoisk says, its id, name and year (its meta is
- * AIOMetadata's IMDb one). A tt TMDB knows as the other type, or whose tile TMDB search leaves out
+ * know at all («Леди Мэр», 2003) is a tile of what Kinopoisk says, its id, name, poster and year (its meta
+ * is AIOMetadata's IMDb one, with Kinopoisk's fields, kpCard.ts). A tt TMDB knows as the other type, or whose tile TMDB search leaves out
  * (adult), adds nothing. hydrate throwing (TMDB failed) makes the answer partial.
  */
 export async function kpTailOf(head: any[], answer: KpAnswer, type: 'movie' | 'series', hydrate: (tt: string) => Promise<Hydrated>): Promise<{ metas: any[]; hits: KpHit[]; kpPartial?: true }> {
@@ -232,7 +232,7 @@ export async function kpTailOf(head: any[], answer: KpAnswer, type: 'movie' | 's
 
 function kpOnlyTile(hit: KpHit, type: 'movie' | 'series'): any {
   const year = hit.year ? String(hit.year) : undefined;
-  return { id: hit.tt, imdb_id: hit.tt, type, name: hit.name, ...(year ? { year, releaseInfo: year } : {}) };
+  return { id: hit.tt, imdb_id: hit.tt, type, name: hit.name, ...(hit.poster ? { poster: hit.poster } : {}), ...(year ? { year, releaseInfo: year } : {}) };
 }
 
 /** The search entry of the added tiles: a partial one for a few minutes, an error never. */
