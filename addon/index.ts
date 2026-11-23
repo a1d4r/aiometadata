@@ -5815,8 +5815,8 @@ const metaRoute = async function (req, res) {
       }
     }
 
-    // Melange: Kinopoisk's name, poster and description for IMDb's stand-in or no meta (kpCard.ts).
-    if (req.params.forJellyfin !== '1') result = await require('./lib/kpCard').withKpCard(result, type, stremioId);
+    // Melange: Kinopoisk's fields for IMDb's stand-in, no meta or TMDB's with no Russian description (kpCard.ts).
+    if (req.params.forJellyfin !== '1') result = await require('./lib/kpCard').withKpCard(result, type, stremioId, language);
 
     if (!result || !result.meta) {
       return respond(req, res, { meta: null });

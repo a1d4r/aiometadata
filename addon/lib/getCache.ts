@@ -2029,6 +2029,7 @@ async function writeMetaComponentsWithConfig({ config, metaId, result, ttl = MET
     airDays: meta.airDays,
     airTime: meta.airTime,
     _originalLanguage: meta._originalLanguage,
+    _completeness: meta._completeness, // Melange: kpCard.ts reads overviewLang on the way out
     status: meta.status,
     imdbRating: meta.imdbRating,
     behaviorHints: meta.behaviorHints,
