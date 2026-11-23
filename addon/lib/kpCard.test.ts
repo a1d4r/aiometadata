@@ -94,8 +94,8 @@ describe("TMDB's meta with no Russian description", () => {
 
   test('the route: a TMDB meta with the sign gets the description, without it is never asked', async () => {
     const asked: Array<[string, number]> = [];
-    const ask = async (tt: string, _type: string, timeoutMs?: number) => {
-      asked.push([tt, timeoutMs!]);
+    const ask = async (tt: string, _type: string, options?: { meta?: any; timeoutMs?: number }) => {
+      asked.push([tt, options!.timeoutMs!]);
       return card({ year: 1954, seasons: [[1, 9]] });
     };
     const meta = { id: 'tt0047556', _metaProvider: 'tmdb', _completeness: fellBack, name: 'Танганьика', year: '1954',
@@ -119,8 +119,12 @@ describe("kp's answer", () => {
         seasons: [[1, 10], [2, 5], [0, 3], ['3', 1]], released: '2020-09-08T05:28:49Z',
       } }), { status: 200 });
     }) as typeof fetch;
-    const got = await askKpCard('tt1166122', 'series', undefined, fake);
-    assert.deepEqual(sent, { url: 'http://kp:8080/card', body: { tt: 'tt1166122', type: 'tv' } });
+    const got = await askKpCard('tt1166122', 'series', { meta: standIn() }, fake);
+    assert.deepEqual(sent, { url: 'http://kp:8080/card', body: { tt: 'tt1166122', type: 'tv', item: {
+      k: 'imdb:tt1166122', type: 'tv', tmdb: null, tt: 'tt1166122', name: 'Pyatyy ugol', original: '', english: '', year: 2001,
+      countries: [], tier: 'day' } } }, "the meta's names and year, as a tile's: kp finds the kp as for /titles");
+    await askKpCard('tt33368267', 'series', {}, fake);
+    assert.deepEqual(sent.body, { tt: 'tt33368267', type: 'tv' }, 'no meta: the tt alone');
     assert.deepEqual(got, card({ seasons: [[1, 10], [2, 5]] }), 'season 0 and a bad one left out');
     assert.deepEqual(tracked.at(-1), ['kp', true]);
   });
@@ -132,13 +136,13 @@ describe("kp's answer", () => {
       (async () => new Response('[]', { status: 200 })) as typeof fetch,
       (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch,
     ]) {
-      assert.equal(await askKpCard('tt1166122', 'movie', undefined, fake), null);
+      assert.equal(await askKpCard('tt1166122', 'movie', {}, fake), null);
     }
     const slow = (async (_url: string, init: any) => new Promise((_, reject) => init.signal.addEventListener('abort',
       () => reject(init.signal.reason)))) as typeof fetch;
-    assert.equal(await askKpCard('tt0047556', 'movie', 20, slow), null);
+    assert.equal(await askKpCard('tt0047556', 'movie', { timeoutMs: 20 }, slow), null);
     assert.deepEqual(tracked.at(-1), ['kp', true], "TMDB's short wait running out is no failure of kp");
-    assert.equal(await askKpCard('tt0047556', 'movie', 4000, (async () => { throw new DOMException('t', 'TimeoutError'); }) as typeof fetch), null);
+    assert.equal(await askKpCard('tt0047556', 'movie', { timeoutMs: 4000 }, (async () => { throw new DOMException('t', 'TimeoutError'); }) as typeof fetch), null);
     assert.deepEqual(tracked.at(-1), ['kp', false]);
     assert.equal(cardOf({ kp: 'x', name: 'Имя' }), null);
     const got = cardOf({ kp: 1, name: '', poster: 'https://evil.example/p.jpg', year: 99, released: '2020-09-08 08:28:49', seasons: [[1, 5000], [2, 9]] });

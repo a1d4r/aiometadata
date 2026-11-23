@@ -1,5 +1,5 @@
 import consola from 'consola';
-import { yearOf } from './kinoApi';
+import { kpItemOf, sourceOf, yearOf } from './kinoApi';
 
 /**
  * Melange: the Russian name, poster and description of a title AIOMetadata knows only from IMDb, from
@@ -119,14 +119,24 @@ function track(ms: number, ok: boolean): void {
   }
 }
 
+export interface AskOptions {
+  /** The meta there is: kp finds the kp by its names, year, countries and TMDB id as for a tile (kpItemOf). */
+  meta?: any;
+  timeoutMs?: number;
+}
+
 /** kp's card of a tt, or null: none, or kp failed (the meta stays as it is). */
-export async function askKpCard(tt: string, type: 'movie' | 'series', timeoutMs = TIMEOUT_MS, fetchImpl: typeof fetch = fetch): Promise<KpCard | null> {
+export async function askKpCard(tt: string, type: 'movie' | 'series', options: AskOptions = {}, fetchImpl: typeof fetch = fetch): Promise<KpCard | null> {
+  const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
+  const source = options.meta ? sourceOf(options.meta) : null;
   const started = Date.now();
   try {
     const res = await fetchImpl(`${kpUrl()}/card`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ tt, type: type === 'series' ? 'tv' : 'movie' }),
+      body: JSON.stringify({
+        tt, type: type === 'series' ? 'tv' : 'movie', ...(source ? { item: kpItemOf(options.meta, source, 'day') } : {}),
+      }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) throw new Error(`status ${res.status}`);
@@ -236,7 +246,7 @@ export async function withKpCard(result: any, type: string, id: string, language
   const withMeta = (patched: any) => (patched === meta ? result : { ...result, meta: patched });
   if (!wantsKpCard(type, id, meta, language)) return meta?._metaProvider === 'imdb' ? withMeta(patchStandIn(meta, null)) : result;
   const tmdb = tmdbWithNoRuDescription(meta, language);
-  const card = await ask(id, type as 'movie' | 'series', tmdb ? TMDB_TIMEOUT_MS : TIMEOUT_MS);
+  const card = await ask(id, type as 'movie' | 'series', { meta, timeoutMs: tmdb ? TMDB_TIMEOUT_MS : TIMEOUT_MS });
   if (meta) return withMeta(tmdb ? patchDescription(meta, card) : patchStandIn(meta, card));
   if (!card) return result;
   const built = metaOf(id, type as 'movie' | 'series', card);
