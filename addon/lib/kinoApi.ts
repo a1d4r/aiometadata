@@ -7,28 +7,24 @@ import { getSettleSeconds } from './metaColdStore/config';
 import { envInt } from '../utils/envNumber';
 
 /**
- * Kinopoisk data from Kino API (kinoapi.lampac.dev) on catalog and search tiles, and on
- * the title's own meta (not on the tiles a person or collection page lists).
+ * Kinopoisk data on catalog and search tiles, and on the title's own meta (not on the tiles
+ * a person or collection page lists), from the kp service of Melange VPS: ids from Alloha's
+ * table, numbers from kinopoiskapiunofficial.tech. Named after Kino API (kinoapi.lampac.dev),
+ * its source until 24.11.2026; the store keeps its table name.
  *
  * Added after the catalog caches, right before the response, so its own freshness
  * does not depend on how long a row or a search stays in Redis. Raw answers are kept
  * whole in their own SQLite file; tiles read a small projection of them. Titles not
  * stored yet are fetched in batches for every user at once, and a response waits for
  * them only briefly; anything stale is served as is and refreshed in the background.
- * Two backends. With KP_SERVICE_URL set, the kp service of Melange VPS answers (ids from Alloha's
- * table, numbers from kinopoiskapiunofficial.tech) and answers are kept in kpdata.sqlite; while a title
- * has no row there yet, its old Kino API projection is read from kinoapi.sqlite (read only), so the
- * numbers stay on screen during the fill. Without it, Kino API as before.
- * Read from the environment, not the settings registry:
- *   KP_SERVICE_URL           the kp service, http://kp:8080 (POST /titles); empty: Kino API;
- *   KINOAPI_API_KEY          Kino API's key; with neither set nothing here runs and no file is opened;
- *   KINOAPI_CATALOG_WAIT_MS  how long a row, a search or a meta waits for titles never looked up
- *                            (600 by default, 0 never waits); the others get their data on the next view.
+ * How long an answer is good is the service's to say. Read from the environment, not the settings registry:
+ *   KP_SERVICE_URL      the kp service, http://kp:8080 (POST /titles); empty: nothing here runs and no file is opened;
+ *   KP_CATALOG_WAIT_MS  how long a row, a search or a meta waits for titles never looked up
+ *                       (600 by default, 0 never waits); the others get their data on the next view.
  */
 
-const logger = consola.withTag('Kino API');
+const logger = consola.withTag('Kinopoisk');
 
-const API_URL = 'https://kinoapi.lampac.dev/api/v1/titles/batch';
 const BATCH_SIZE = 50;
 const CONCURRENCY = 2;
 const MIN_INTERVAL_MS = 200;
@@ -36,7 +32,6 @@ const GATHER_MS = 100;
 const TIMEOUT_MS = 10_000;
 const QUEUE_LIMIT = 5000;
 const RETRY_MS = 120_000;
-const DEFAULT_PAUSE_MS = 30_000;
 const DAY = 86_400_000;
 const RECENT_MOVIE_MS = 30 * DAY;
 const FORGET_AFTER_MS = 90 * DAY;
@@ -53,18 +48,15 @@ const MAX_VOICEOVER = 60;
 export const VIEW_VERSION = 1;
 
 export type Tier = 'day' | 'week' | 'month';
-export const TIER_TTL_MS: Record<Tier, number> = { day: DAY, week: 7 * DAY, month: 30 * DAY };
 
 export interface KinoSource {
   k: string;
-  source: 'tmdb' | 'imdb';
-  id: string;
   type: 'movie' | 'tv';
 }
 
 export interface KinoRef extends KinoSource {
   tier: Tier;
-  kpItem?: KpItem;
+  kpItem: KpItem;
 }
 
 /** One tile as the kp service takes it: both ids, the names, year and countries for its rules (spec §3). */
@@ -119,13 +111,13 @@ function idsOf(meta: any): { tmdb: string | null; tt: string | null } {
   return { tmdb, tt };
 }
 
-/** What to ask Kino API for: the TMDB id with the tile's kind, else its IMDb id, else nothing. */
+/** The key of a tile: the TMDB id with the tile's kind, else its IMDb id, else nothing to ask for. */
 export function sourceOf(meta: any): KinoSource | null {
   if (!meta || typeof meta !== 'object' || (meta.type !== 'movie' && meta.type !== 'series')) return null;
   const type = meta.type === 'series' ? 'tv' : 'movie';
   const { tmdb, tt } = idsOf(meta);
-  if (tmdb) return { k: `tmdb:${type}:${tmdb}`, source: 'tmdb', id: tmdb, type };
-  return tt ? { k: `imdb:${tt}`, source: 'imdb', id: tt, type } : null;
+  if (tmdb) return { k: `tmdb:${type}:${tmdb}`, type };
+  return tt ? { k: `imdb:${tt}`, type } : null;
 }
 
 /** Catalog tiles carry `released` as a Date; cached or searched ones may carry a string or a number. */
@@ -173,22 +165,23 @@ function voiceoverName(value: unknown): string {
   return '';
 }
 
-/** The few fields tiles need, taken defensively from one raw Kino API title. */
+/** The few fields tiles need, taken defensively from one kp answer. */
 export function projectView(raw: any): KinoView {
   const view: KinoView = {};
   if (!raw || typeof raw !== 'object') return view;
 
-  const rating = Number(raw.ratings?.kinopoisk?.value);
+  const rating = Number(raw.kpRating);
   if (Number.isFinite(rating) && rating > 0 && rating <= 10) {
     view.kpRating = (Math.round(rating * 10) / 10).toFixed(1);
-    const votes = Number(raw.ratings?.kinopoisk?.votes);
+    // Alloha's rating comes without votes.
+    const votes = Number(raw.kpVotes);
     if (Number.isFinite(votes) && votes >= 0) view.kpVotes = Math.round(votes);
   }
 
-  const kpId = String(raw.id?.kinopoisk ?? '');
+  const kpId = String(raw.kpId ?? '');
   if (NUMERIC_ID.test(kpId)) view.kpId = kpId;
 
-  const short = text(raw.description?.short);
+  const short = text(raw.shortDescription);
   if (short) view.shortDescription = cut(short, MAX_SHORT_DESCRIPTION);
 
   if (Array.isArray(raw.voiceovers)) {
@@ -204,15 +197,9 @@ export function projectView(raw: any): KinoView {
     if (names.length > 0) view.voiceovers = names;
   }
 
-  const age = text(raw.release?.ageRating);
+  const age = text(raw.age);
   if (AGE.test(age)) view.age = age;
   return view;
-}
-
-/** Freshness of a stored answer: titles not found, or with neither a rating nor voiceovers, are asked again in a day. */
-export function ttlFor(tier: Tier, view: KinoView | null): number {
-  if (!view || (!view.kpRating && !view.voiceovers?.length)) return DAY;
-  return TIER_TTL_MS[tier];
 }
 
 const YEAR = /^(\d{4})/;
@@ -240,54 +227,21 @@ export function kpItemOf(meta: any, source: KinoSource, tier: Tier): KpItem {
   };
 }
 
-/** A kp answer in the shape of a Kino API title, so one projection serves both. */
-export function fromKp(item: any): any {
-  if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-  return {
-    id: { kinopoisk: item.kpId },
-    ratings: { kinopoisk: { value: Number(item.kpRating), votes: item.kpVotes } },
-    description: { short: item.shortDescription },
-    voiceovers: item.voiceovers,
-    release: { ageRating: item.age },
-  };
-}
-
 /** An answer worth storing: a non-empty object. `null`, `{}`, arrays and strings count as not found. */
 export function isTitle(raw: unknown): boolean {
   return !!raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length > 0;
 }
 
 /**
- * The row to store after Kino API answered for one title. A title not found that had
- * data keeps the last good data and is asked again in a day.
- */
-export function mergeRow(k: string, prev: StoredRow | undefined, raw: unknown, tier: Tier, now: number): StoredRow {
-  if (isTitle(raw)) {
-    const view = projectView(raw);
-    return {
-      k,
-      raw: JSON.stringify(raw),
-      view: JSON.stringify(view),
-      view_v: VIEW_VERSION,
-      found: 1,
-      fetched_at: now,
-      expires_at: now + ttlFor(tier, view),
-      last_access: now,
-    };
-  }
-  if (prev?.found) return { ...prev, expires_at: now + DAY, last_access: now };
-  return { k, raw: null, view: null, view_v: VIEW_VERSION, found: 0, fetched_at: now, expires_at: now + DAY, last_access: now };
-}
-
-/**
  * The row to store after the kp service answered for one title, or null for `{"pending": true}`:
  * nothing stored, asked again after RETRY_MS. How long an answer is good is the service's to say
  * (expires_at, from the tier sent and what it knows of the card); asked again no sooner than RETRY_MS.
+ * A title not found that had data keeps the last good data and is asked again in a day.
  */
-export function kpMergeRow(k: string, prev: StoredRow | undefined, item: unknown, tier: Tier, now: number): StoredRow | null {
+export function mergeRow(k: string, prev: StoredRow | undefined, item: unknown, now: number): StoredRow | null {
   if (item && typeof item === 'object' && (item as any).pending === true) return null;
   if (isTitle(item) && NUMERIC_ID.test(String((item as any).kpId ?? ''))) {
-    const view = projectView(fromKp(item));
+    const view = projectView(item);
     const at = Number((item as any).fetched_at) * 1000;
     const fetchedAt = Number.isFinite(at) && at > 0 && at <= now ? at : now;
     const until = Number((item as any).expires_at) * 1000;
@@ -303,7 +257,8 @@ export function kpMergeRow(k: string, prev: StoredRow | undefined, item: unknown
       last_access: now,
     };
   }
-  return mergeRow(k, prev, null, tier, now);
+  if (prev?.found) return { ...prev, expires_at: now + DAY, last_access: now };
+  return { k, raw: null, view: null, view_v: VIEW_VERSION, found: 0, fetched_at: now, expires_at: now + DAY, last_access: now };
 }
 
 /** A copy of the tile with the Kinopoisk fields; the tile itself is never changed, since cached tiles may be shared. */
@@ -354,7 +309,7 @@ function storeError(message: string): void {
 function openStore(): Store | null {
   if (store) return store;
   if (Date.now() < openFailedUntil) return null;
-  const file = path.join(process.cwd(), 'addon', 'data', kpUrl() ? 'kpdata.sqlite' : 'kinoapi.sqlite');
+  const file = path.join(process.cwd(), 'addon', 'data', 'kpdata.sqlite');
   let db: BetterSqlite3.Database | null = null;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -400,7 +355,7 @@ function openStore(): Store | null {
       // already unusable
     }
     openFailedUntil = Date.now() + REOPEN_AFTER_MS;
-    storeError(`Could not open the Kino API store, trying again in 10 minutes: ${(error as Error).message}`);
+    storeError(`Could not open the Kinopoisk store, trying again in 10 minutes: ${(error as Error).message}`);
     return null;
   }
   const opened = store;
@@ -415,35 +370,6 @@ function openStore(): Store | null {
   timer.unref?.();
   logger.info(`Kinopoisk store ready at ${file}`);
   return store;
-}
-
-let legacy: BetterSqlite3.Statement | null = null;
-let legacyFailedUntil = 0;
-
-/** kp only: the Kino API projections of titles kpdata.sqlite has no row for yet, read only. */
-function readLegacy(keys: string[]): Map<string, KinoView> {
-  const out = new Map<string, KinoView>();
-  if (keys.length === 0 || Date.now() < legacyFailedUntil) return out;
-  try {
-    if (!legacy) {
-      const db = new BetterSqlite3(path.join(process.cwd(), 'addon', 'data', 'kinoapi.sqlite'), { readonly: true, fileMustExist: true });
-      db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
-      legacy = db.prepare('SELECT k, view FROM kino_titles WHERE found = 1 AND k IN (SELECT value FROM json_each(?))');
-    }
-    for (const row of legacy.all(JSON.stringify(keys)) as Array<{ k: string; view: string | null }>) {
-      const view = parseView(row.view);
-      if (view) out.set(row.k, view);
-    }
-  } catch (error) {
-    legacy = null;
-    legacyFailedUntil = Date.now() + REOPEN_AFTER_MS;
-    logger.debug(`Kino API projections unreadable: ${(error as Error).message}`);
-  }
-  return out;
-}
-
-function project(raw: unknown): KinoView {
-  return projectView(kpUrl() ? fromKp(raw) : raw);
 }
 
 interface ReadView {
@@ -479,7 +405,7 @@ function readViews(s: Store, keys: string[], now: number): Map<string, ReadView>
       const rebuilt: Array<[string, KinoView]> = [];
       for (const { k, raw } of raws) {
         try {
-          rebuilt.push([k, project(JSON.parse(raw ?? 'null'))]);
+          rebuilt.push([k, projectView(JSON.parse(raw ?? 'null'))]);
         } catch {
           continue;
         }
@@ -510,10 +436,9 @@ function storeAnswers(s: Store, refs: KinoRef[], data: unknown[], now: number): 
     for (const row of s.readFull.all(JSON.stringify(nulls)) as StoredRow[]) prev.set(row.k, row);
   }
   const later: string[] = [];
-  const kp = !!kpUrl();
   s.db.transaction(() => {
     refs.forEach((ref, index) => {
-      const row = kp ? kpMergeRow(ref.k, prev.get(ref.k), data[index], ref.tier, now) : mergeRow(ref.k, prev.get(ref.k), data[index], ref.tier, now);
+      const row = mergeRow(ref.k, prev.get(ref.k), data[index], now);
       if (row) s.upsert.run(row);
       else later.push(ref.k);
     });
@@ -525,25 +450,6 @@ function storeAnswers(s: Store, refs: KinoRef[], data: unknown[], now: number): 
 // Client and queue (a trimmed copy of the one in criticRatings.ts)
 // ---------------------------------------------------------------------------
 
-class Paused extends Error {
-  constructor(readonly ms: number) {
-    super('rate limited');
-  }
-}
-
-export function retryAfterMs(header: string | null, now: number = Date.now()): number {
-  const value = String(header ?? '').trim();
-  if (!value) return DEFAULT_PAUSE_MS;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds)) return seconds >= 0 ? Math.min(seconds * 1000, 10 * 60_000) : DEFAULT_PAUSE_MS;
-  const at = Date.parse(value);
-  return Number.isFinite(at) ? Math.min(Math.max(at - now, 0), 10 * 60_000) : DEFAULT_PAUSE_MS;
-}
-
-function apiKey(): string {
-  return String(process.env.KINOAPI_API_KEY || '').trim();
-}
-
 function kpUrl(): string {
   return String(process.env.KP_SERVICE_URL || '').trim();
 }
@@ -551,7 +457,7 @@ function kpUrl(): string {
 // Required lazily: the tests put a stand-in for it in the require cache.
 function track(ms: number, ok: boolean): void {
   try {
-    require('./requestTracker').trackProviderCall(kpUrl() ? 'kp' : 'kinoapi', ms, ok);
+    require('./requestTracker').trackProviderCall('kp', ms, ok);
   } catch {
     return;
   }
@@ -570,32 +476,27 @@ function warn(message: string): void {
 
 let lastRequestAt = 0;
 let throttleChain: Promise<void> = Promise.resolve();
-let pausedUntil = 0;
 
-/** Requests start at least MIN_INTERVAL_MS apart, and not while Kino API asked to pause. */
+/** Requests start at least MIN_INTERVAL_MS apart. */
 function throttle(): Promise<void> {
   const turn = throttleChain.then(async () => {
-    // A 429 may arrive while this one sleeps, so the pause is checked again after each sleep.
-    const due = () => Math.max(lastRequestAt + MIN_INTERVAL_MS, pausedUntil) - Date.now();
-    for (let wait = due(); wait > 0; wait = due()) await new Promise((resolve) => setTimeout(resolve, wait));
+    const wait = lastRequestAt + MIN_INTERVAL_MS - Date.now();
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
     lastRequestAt = Date.now();
   });
   throttleChain = turn;
   return turn;
 }
 
-async function fetchTitles(refs: KinoRef[], key: string): Promise<unknown[]> {
+async function fetchTitles(refs: KinoRef[]): Promise<unknown[]> {
   await throttle();
   const started = Date.now();
-  const kp = kpUrl();
   let res: Response;
   try {
-    res = await fetch(kp ? `${kp.replace(/\/+$/, '')}/titles` : API_URL, {
+    res = await fetch(`${kpUrl().replace(/\/+$/, '')}/titles`, {
       method: 'POST',
-      headers: kp
-        ? { 'Content-Type': 'application/json', Accept: 'application/json' }
-        : { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ items: kp ? refs.map((ref) => ref.kpItem) : refs.map(({ source, id, type }) => ({ source, id, type })) }),
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ items: refs.map((ref) => ref.kpItem) }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (error) {
@@ -603,7 +504,6 @@ async function fetchTitles(refs: KinoRef[], key: string): Promise<unknown[]> {
     throw new Error((error as Error)?.name === 'TimeoutError' ? 'timed out' : 'network error');
   }
   track(Date.now() - started, res.ok);
-  if (res.status === 429) throw new Paused(retryAfterMs(res.headers.get('Retry-After')));
   if (!res.ok) throw new Error(`status ${res.status}`);
   let body: any;
   try {
@@ -674,13 +574,11 @@ function drain(): void {
 
 async function runBatch(batch: Pending[]): Promise<void> {
   const refs = batch.map((item) => item.ref);
-  const key = apiKey();
-  if (!key && !kpUrl()) return;
+  if (!kpUrl()) return;
   let data: unknown[];
   try {
-    data = await fetchTitles(refs, key);
+    data = await fetchTitles(refs);
   } catch (error) {
-    if (error instanceof Paused) pausedUntil = Math.max(pausedUntil, Date.now() + error.ms);
     const retryAt = Date.now() + RETRY_MS;
     for (const ref of refs) failed.set(ref.k, retryAt);
     warn(`Could not read ${refs.length} titles: ${(error as Error).message}`);
@@ -694,7 +592,7 @@ async function runBatch(batch: Pending[]): Promise<void> {
     for (const k of later) failed.set(k, retryAt);
     logger.debug(`Stored ${refs.length - later.length} titles, ${data.filter(isTitle).length - later.length} found, ${later.length} not ready`);
   } catch (error) {
-    // Not asked for again right away: otherwise every page would send them to Kino API anew.
+    // Not asked for again right away: otherwise every page would send them to the service anew.
     const retryAt = Date.now() + RETRY_MS;
     for (const ref of refs) failed.set(ref.k, retryAt);
     storeError(`Could not store ${refs.length} titles: ${(error as Error).message}`);
@@ -719,13 +617,12 @@ async function waitFor(waiting: Promise<void>[], ms: number): Promise<void> {
 async function enrich(metas: any[]): Promise<any[]> {
   const now = Date.now();
   const refs = new Map<string, KinoRef>();
-  const kp = !!kpUrl();
   const keyAt = metas.map((meta) => {
     const source = sourceOf(meta);
     if (!source) return undefined;
     if (!refs.has(source.k)) {
       const tier = freshnessTier(meta, now);
-      refs.set(source.k, { ...source, tier, ...(kp ? { kpItem: kpItemOf(meta, source, tier) } : {}) });
+      refs.set(source.k, { ...source, tier, kpItem: kpItemOf(meta, source, tier) });
     }
     return source.k;
   });
@@ -734,19 +631,10 @@ async function enrich(metas: any[]): Promise<any[]> {
   const s = openStore();
   if (!s) return metas;
   const views = readViews(s, [...refs.keys()], now);
-  // Kino API's numbers stay for titles kp has no data for: no row yet, or a row of "no id" (until stage 7).
-  const old = kp ? readLegacy([...refs.keys()].filter((k) => !views.get(k)?.view)) : new Map<string, KinoView>();
   const waiting: Promise<void>[] = [];
   const missing: string[] = [];
   for (const ref of refs.values()) {
     const row = views.get(ref.k);
-    // Kino API's numbers stay on screen until the kp service has data for the title: asked, not waited for.
-    const legacyView = old.get(ref.k);
-    if (legacyView) {
-      if (!row || row.expiresAt <= now) queue(ref);
-      views.set(ref.k, { view: legacyView, expiresAt: row?.expiresAt ?? 0 });
-      continue;
-    }
     if (row) {
       if (row.expiresAt <= now) queue(ref);
       continue;
@@ -757,7 +645,7 @@ async function enrich(metas: any[]): Promise<any[]> {
       missing.push(ref.k);
     }
   }
-  const waitMs = envInt('KINOAPI_CATALOG_WAIT_MS', DEFAULT_WAIT_MS, 0);
+  const waitMs = envInt('KP_CATALOG_WAIT_MS', DEFAULT_WAIT_MS, 0);
   if (waiting.length > 0 && waitMs > 0) {
     await waitFor(waiting, waitMs);
     for (const [k, row] of readViews(s, missing, Date.now())) views.set(k, row);
@@ -774,9 +662,9 @@ async function enrich(metas: any[]): Promise<any[]> {
   return out;
 }
 
-/** Catalog and search tiles, or a title's meta, with Kinopoisk fields added; the same array when there is nothing to add or no key. */
+/** Catalog and search tiles, or a title's meta, with Kinopoisk fields added; the same array when there is nothing to add or no KP_SERVICE_URL. */
 export async function withKinoApi(metas: any[]): Promise<any[]> {
-  if (!Array.isArray(metas) || metas.length === 0 || (!apiKey() && !kpUrl())) return metas;
+  if (!Array.isArray(metas) || metas.length === 0 || !kpUrl()) return metas;
   try {
     return await enrich(metas);
   } catch (error) {

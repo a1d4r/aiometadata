@@ -1,5 +1,5 @@
 /*
- * Run without network or a real key:
+ * Run without network or the kp service:
  *   TS_NODE_SKIP_PROJECT=1 TS_NODE_TRANSPILE_ONLY=1 \
  *   TS_NODE_COMPILER_OPTIONS='{"module":"commonjs","target":"es2022","esModuleInterop":true,"ignoreDeprecations":"6.0"}' \
  *   node --require ts-node/register --test addon/lib/kinoApi.test.ts
@@ -13,13 +13,12 @@ import BetterSqlite3 from 'better-sqlite3';
 import {
   applyView,
   freshnessTier,
+  kpItemOf,
   mergeRow,
   projectView,
-  retryAfterMs,
   sourceOf,
-  ttlFor,
   withKinoApi,
-  TIER_TTL_MS,
+  yearOf,
   VIEW_VERSION,
   type StoredRow,
 } from './kinoApi';
@@ -30,18 +29,18 @@ const daysAgo = (days: number) => new Date(NOW - days * DAY).toISOString();
 
 describe('sourceOf', () => {
   test('TMDB id with the kind of the tile', () => {
-    assert.deepEqual(sourceOf({ type: 'movie', _tmdbId: 550, imdb_id: 'tt0137523' }), { k: 'tmdb:movie:550', source: 'tmdb', id: '550', type: 'movie' });
-    assert.deepEqual(sourceOf({ type: 'series', _tmdbId: '1399' }), { k: 'tmdb:tv:1399', source: 'tmdb', id: '1399', type: 'tv' });
+    assert.deepEqual(sourceOf({ type: 'movie', _tmdbId: 550, imdb_id: 'tt0137523' }), { k: 'tmdb:movie:550', type: 'movie' });
+    assert.deepEqual(sourceOf({ type: 'series', _tmdbId: '1399' }), { k: 'tmdb:tv:1399', type: 'tv' });
   });
 
   test('IMDb id when there is no TMDB id', () => {
-    assert.deepEqual(sourceOf({ type: 'series', imdb_id: 'tt0944947' }), { k: 'imdb:tt0944947', source: 'imdb', id: 'tt0944947', type: 'tv' });
+    assert.deepEqual(sourceOf({ type: 'series', imdb_id: 'tt0944947' }), { k: 'imdb:tt0944947', type: 'tv' });
     assert.equal(sourceOf({ type: 'movie', id: 'tt0137523' })?.k, 'imdb:tt0137523');
     assert.equal(sourceOf({ type: 'movie', _tmdbId: 'abc', id: 'tt0137523' })?.k, 'imdb:tt0137523');
   });
 
   test('TMDB id from a tmdb: id when there is no _tmdbId', () => {
-    assert.deepEqual(sourceOf({ type: 'series', id: 'tmdb:1399', imdb_id: 'tt0944947' }), { k: 'tmdb:tv:1399', source: 'tmdb', id: '1399', type: 'tv' });
+    assert.deepEqual(sourceOf({ type: 'series', id: 'tmdb:1399', imdb_id: 'tt0944947' }), { k: 'tmdb:tv:1399', type: 'tv' });
   });
 
   test('nothing to ask for', () => {
@@ -56,21 +55,23 @@ describe('sourceOf', () => {
 
 describe('projectView', () => {
   test('rating with one decimal, votes only with a rating', () => {
-    assert.deepEqual(projectView({ ratings: { kinopoisk: { value: 7.94, votes: 12345 } } }), { kpRating: '7.9', kpVotes: 12345 });
-    assert.deepEqual(projectView({ ratings: { kinopoisk: { value: 7, votes: 3 } } }), { kpRating: '7.0', kpVotes: 3 });
-    assert.deepEqual(projectView({ ratings: { kinopoisk: { value: 0, votes: 50 } } }), {});
-    assert.deepEqual(projectView({ ratings: { kinopoisk: { value: null } } }), {});
+    assert.deepEqual(projectView({ kpRating: '7.94', kpVotes: 12345 }), { kpRating: '7.9', kpVotes: 12345 });
+    assert.deepEqual(projectView({ kpRating: 7, kpVotes: 3 }), { kpRating: '7.0', kpVotes: 3 });
+    assert.deepEqual(projectView({ kpRating: '0', kpVotes: 50 }), {});
+    assert.deepEqual(projectView({ kpRating: null }), {});
+    // Alloha's rating comes without votes.
+    assert.deepEqual(projectView({ kpId: '1', kpRating: '7.4' }), { kpRating: '7.4', kpId: '1' });
   });
 
   test('Kinopoisk id only as digits', () => {
-    assert.equal(projectView({ id: { kinopoisk: 326 } }).kpId, '326');
-    assert.equal(projectView({ id: { kinopoisk: '326x' } }).kpId, undefined);
+    assert.equal(projectView({ kpId: 326 }).kpId, '326');
+    assert.equal(projectView({ kpId: '326x' }).kpId, undefined);
   });
 
   test('short description cut to 300 characters', () => {
-    assert.equal(projectView({ description: { short: '  Одна  фраза. ' } }).shortDescription, 'Одна фраза.');
-    assert.equal(Array.from(projectView({ description: { short: 'я'.repeat(500) } }).shortDescription!).length, 300);
-    assert.equal(projectView({ description: { short: '   ' } }).shortDescription, undefined);
+    assert.equal(projectView({ shortDescription: '  Одна  фраза. ' }).shortDescription, 'Одна фраза.');
+    assert.equal(Array.from(projectView({ shortDescription: 'я'.repeat(500) }).shortDescription!).length, 300);
+    assert.equal(projectView({ shortDescription: '   ' }).shortDescription, undefined);
   });
 
   test('voiceovers without empties and repeats, at most 30 of at most 60 characters', () => {
@@ -82,18 +83,52 @@ describe('projectView', () => {
   });
 
   test('age only like 16+', () => {
-    assert.equal(projectView({ release: { ageRating: '16+' } }).age, '16+');
-    assert.equal(projectView({ release: { ageRating: '0+' } }).age, '0+');
-    assert.equal(projectView({ release: { ageRating: 'R' } }).age, undefined);
-    assert.equal(projectView({ release: { ageRating: '160+' } }).age, undefined);
+    assert.equal(projectView({ age: '16+' }).age, '16+');
+    assert.equal(projectView({ age: '0+' }).age, '0+');
+    assert.equal(projectView({ age: 'R' }).age, undefined);
+    assert.equal(projectView({ age: '160+' }).age, undefined);
   });
 
-  test('English title is never taken', () => {
-    assert.deepEqual(projectView({ title: { en: 'Бойцовский клуб' } }), {});
+  test('a whole answer, and nothing else is taken', () => {
+    assert.deepEqual(
+      projectView({ kpId: '326', kpRating: '9.1', kpVotes: 1_000_000, age: '16+', shortDescription: 'Про тюрьму', voiceovers: ['Дубляж'], fetched_at: 1, expires_at: 2, name: 'Побег' }),
+      { kpRating: '9.1', kpVotes: 1_000_000, kpId: '326', shortDescription: 'Про тюрьму', voiceovers: ['Дубляж'], age: '16+' },
+    );
   });
 });
 
-describe('freshnessTier and ttlFor', () => {
+describe('the tile as the kp service gets it', () => {
+  test('year from year, releaseInfo, or released as a Date, a string or a number', () => {
+    assert.equal(yearOf({ year: '2008–2013' }), 2008);
+    assert.equal(yearOf({ year: 2019 }), 2019);
+    assert.equal(yearOf({ releaseInfo: '2024-' }), 2024);
+    // Catalog tiles carry released as a Date: the year must come out of it, not "[object Date]".
+    assert.equal(yearOf({ released: new Date('2026-07-15T19:00:00.000Z') }), 2026);
+    assert.equal(yearOf({ released: '1994-09-23T00:00:00.000Z' }), 1994);
+    assert.equal(yearOf({ released: Date.parse('2001-01-01') }), 2001);
+    assert.equal(yearOf({ released: new Date('nope') }), null);
+    assert.equal(yearOf({}), null);
+  });
+
+  test('both ids, the names and the countries', () => {
+    const meta = {
+      id: 'tt33764258', type: 'movie', _tmdbId: '1368337', imdb_id: 'tt33764258', name: 'Одиссея',
+      originalTitle: 'The Odyssey', englishTitle: 'The Odyssey', released: new Date('2026-07-15T19:00:00.000Z'),
+      countries: ['United Kingdom', 'United States of America'],
+    };
+    const source = sourceOf(meta)!;
+    assert.deepEqual(kpItemOf(meta, source, 'day'), {
+      k: 'tmdb:movie:1368337', type: 'movie', tmdb: '1368337', tt: 'tt33764258', name: 'Одиссея',
+      original: 'The Odyssey', english: 'The Odyssey', year: 2026,
+      countries: ['United Kingdom', 'United States of America'], tier: 'day',
+    });
+    const series = { id: 'tmdb:1396', type: 'series', country: 'United States of America, Canada', releaseInfo: '2008-2013' };
+    const item = kpItemOf(series, sourceOf(series)!, 'month');
+    assert.deepEqual([item.tmdb, item.tt, item.type, item.countries, item.year], ['1396', null, 'tv', ['United States of America', 'Canada'], 2008]);
+  });
+});
+
+describe('freshnessTier', () => {
   test('movies', () => {
     assert.equal(freshnessTier({ type: 'movie' }, NOW), 'day');
     assert.equal(freshnessTier({ type: 'movie', released: daysAgo(10) }, NOW), 'day');
@@ -117,28 +152,46 @@ describe('freshnessTier and ttlFor', () => {
     assert.equal(freshnessTier({ type: 'series', releaseInfo: '2020' }, NOW), 'month');
     assert.equal(freshnessTier({ type: 'series' }, NOW), 'day');
   });
-
-  test('a day for titles not found or with neither rating nor voiceovers', () => {
-    assert.equal(ttlFor('month', null), DAY);
-    assert.equal(ttlFor('month', { kpId: '1', shortDescription: 'x' }), DAY);
-    assert.equal(ttlFor('month', { kpRating: '7.0' }), TIER_TTL_MS.month);
-    assert.equal(ttlFor('week', { voiceovers: ['Гоблин'] }), TIER_TTL_MS.week);
-  });
 });
 
 describe('mergeRow', () => {
-  const good = mergeRow('tmdb:movie:550', undefined, { ratings: { kinopoisk: { value: 8.7, votes: 900 } } }, 'month', NOW);
+  const item = {
+    kpId: '326', kpRating: '9.1', kpVotes: 1_000_000, age: '16+', shortDescription: 'Про тюрьму', voiceovers: ['Дубляж'],
+    fetched_at: (NOW - 10 * DAY) / 1000, expires_at: (NOW + 20 * DAY) / 1000,
+  };
+  const good = mergeRow('tmdb:movie:278', undefined, item, NOW)!;
 
-  test('a found title stores raw and view', () => {
+  test('a found title stores the answer and its view', () => {
     assert.equal(good.found, 1);
     assert.equal(good.view_v, VIEW_VERSION);
-    assert.deepEqual(JSON.parse(good.view!), { kpRating: '8.7', kpVotes: 900 });
-    assert.equal(good.expires_at, NOW + TIER_TTL_MS.month);
+    assert.deepEqual(JSON.parse(good.raw!), item);
+    assert.deepEqual(JSON.parse(good.view!), { kpRating: '9.1', kpVotes: 1_000_000, kpId: '326', shortDescription: 'Про тюрьму', voiceovers: ['Дубляж'], age: '16+' });
+  });
+
+  test('keeps the expires_at of the service, asked again no sooner than in 2 min', () => {
+    assert.equal(good.fetched_at, NOW - 10 * DAY);
+    assert.equal(good.expires_at, NOW + 20 * DAY);
+    const old = mergeRow('tmdb:movie:278', undefined, { ...item, expires_at: (NOW - DAY) / 1000 }, NOW)!;
+    assert.equal(old.expires_at, NOW + 120_000);
+    const none = mergeRow('tmdb:movie:278', undefined, { kpId: '1' }, NOW)!;
+    assert.equal(none.expires_at, NOW + DAY, 'no expires_at: a day');
+    const future = mergeRow('tmdb:movie:278', undefined, { ...item, fetched_at: NOW / 1000 + 3600 }, NOW)!;
+    assert.equal(future.fetched_at, NOW);
+  });
+
+  test('expires_at in a wrong unit is capped', () => {
+    const row = mergeRow('k', undefined, { kpId: '1', fetched_at: NOW / 1000, expires_at: NOW + DAY }, NOW)!;
+    assert.equal(row.expires_at, NOW + 31 * DAY);
+  });
+
+  test('pending is not stored', () => {
+    assert.equal(mergeRow('k', undefined, { pending: true }, NOW), null);
+    assert.equal(mergeRow('k', good, { pending: true }, NOW), null);
   });
 
   test('null after data keeps the data and asks again in a day', () => {
     const later = NOW + 40 * DAY;
-    const row = mergeRow('tmdb:movie:550', good, null, 'month', later);
+    const row = mergeRow('tmdb:movie:278', good, null, later)!;
     assert.equal(row.found, 1);
     assert.equal(row.raw, good.raw);
     assert.equal(row.view, good.view);
@@ -146,20 +199,20 @@ describe('mergeRow', () => {
     assert.equal(row.expires_at, later + DAY);
   });
 
-  test('an empty object, an array or a string counts as null', () => {
-    for (const raw of [{}, [], 'x', 0]) {
-      const row = mergeRow('tmdb:movie:550', good, raw, 'month', NOW + DAY);
+  test('an empty object, an array, a string or an answer without a kp id counts as null', () => {
+    for (const raw of [{}, [], 'x', 0, { kpId: 'x' }, { kpRating: '7.0' }]) {
+      const row = mergeRow('tmdb:movie:278', good, raw, NOW + DAY)!;
       assert.equal(row.raw, good.raw);
       assert.equal(row.found, 1);
       assert.equal(row.expires_at, NOW + 2 * DAY);
-      assert.equal(mergeRow('imdb:tt2', undefined, raw, 'month', NOW).found, 0);
+      assert.equal(mergeRow('imdb:tt2', undefined, raw, NOW)!.found, 0);
     }
   });
 
   test('null without data is stored as not found for a day', () => {
-    const row = mergeRow('imdb:tt1', undefined, null, 'month', NOW);
+    const row = mergeRow('imdb:tt1', undefined, null, NOW)!;
     assert.deepEqual([row.found, row.raw, row.view, row.expires_at], [0, null, null, NOW + DAY]);
-    const again = mergeRow('imdb:tt1', row, null, 'month', NOW + 2 * DAY);
+    const again = mergeRow('imdb:tt1', row, null, NOW + 2 * DAY)!;
     assert.equal(again.found, 0);
   });
 });
@@ -221,21 +274,11 @@ describe('a full meta, as the meta route sends it', () => {
   });
 });
 
-test('retryAfterMs', () => {
-  assert.equal(retryAfterMs('2'), 2000);
-  assert.equal(retryAfterMs('0'), 0);
-  assert.equal(retryAfterMs(''), 30_000);
-  assert.equal(retryAfterMs(null), 30_000);
-  assert.equal(retryAfterMs('soon'), 30_000);
-  assert.equal(retryAfterMs(new Date(NOW + 5000).toUTCString(), NOW), 5000);
-});
-
 // ---------------------------------------------------------------------------
 // Queue and store, with a stand-in for fetch and a temporary database
 // ---------------------------------------------------------------------------
 
-// The real settings service needs the addon database and the request tracker needs Redis:
-// here the key comes from the environment only, and calls are not counted.
+// The request tracker needs Redis: here the calls are only listed.
 const stub = (name: string, exports: object) => {
   const Module = require('node:module');
   const file = require.resolve(name);
@@ -245,33 +288,38 @@ const stub = (name: string, exports: object) => {
   mod.exports = exports;
   require.cache[file] = mod;
 };
-stub('./requestTracker', { trackProviderCall: () => undefined });
+const tracked: string[] = [];
+stub('./requestTracker', { trackProviderCall: (name: string) => tracked.push(name) });
 
 const tiles = (from: number, count: number) => Array.from({ length: count }, (_, i) => ({ id: `tt${from + i}`, type: 'movie', _tmdbId: String(from + i), released: '2001-01-01' }));
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 interface Call {
   at: number;
+  url: string;
   auth: string | null;
-  items: Array<{ source: string; id: string; type: string }>;
+  items: any[];
 }
 
 describe('withKinoApi', () => {
   const realFetch = globalThis.fetch;
   const realCwd = process.cwd();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kinoapi-test-'));
-  const dbFile = path.join(dir, 'addon', 'data', 'kinoapi.sqlite');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpdata-test-'));
+  const dbFile = path.join(dir, 'addon', 'data', 'kpdata.sqlite');
   let calls: Call[] = [];
   let answer: (call: Call) => Promise<Response> | Response;
 
-  const titleFor = (item: { id: string }) => ({ id: { kinopoisk: 100 + Number(item.id.replace(/\D/g, '')) }, ratings: { kinopoisk: { value: 7.25, votes: 42 } }, voiceovers: ['Дублированный'] });
-  const ok = (call: Call) => Response.json({ data: call.items.map(titleFor), meta: { requested: call.items.length, found: call.items.length } });
+  const titleFor = (item: { tmdb: string }) => ({
+    kpId: String(100 + Number(item.tmdb)), kpRating: '7.25', kpVotes: 42, voiceovers: ['Дублированный'],
+    fetched_at: Date.now() / 1000, expires_at: Date.now() / 1000 + 30 * 86_400,
+  });
+  const ok = (call: Call) => Response.json({ data: call.items.map(titleFor) });
   const sql = () => new BetterSqlite3(dbFile);
 
   before(() => {
     process.chdir(dir);
     globalThis.fetch = (async (_url: any, init: any) => {
-      const call: Call = { at: Date.now(), auth: new Headers(init.headers).get('Authorization'), items: JSON.parse(init.body).items };
+      const call: Call = { at: Date.now(), url: String(_url), auth: new Headers(init.headers).get('Authorization'), items: JSON.parse(init.body).items };
       calls.push(call);
       return answer(call);
     }) as typeof fetch;
@@ -281,28 +329,36 @@ describe('withKinoApi', () => {
   after(() => {
     globalThis.fetch = realFetch;
     process.chdir(realCwd);
-    delete process.env.KINOAPI_API_KEY;
-    delete process.env.KINOAPI_CATALOG_WAIT_MS;
+    delete process.env.KP_SERVICE_URL;
+    delete process.env.KP_CATALOG_WAIT_MS;
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  test('without a key the tiles come back as they are and no file is opened', async () => {
-    delete process.env.KINOAPI_API_KEY;
+  test('without KP_SERVICE_URL the tiles come back as they are and no file is opened', async () => {
+    delete process.env.KP_SERVICE_URL;
+    // Kino API's key, left over from before 24.11.2026, turns nothing on.
+    process.env.KINOAPI_API_KEY = 'old-key';
     const metas = tiles(1, 3);
     assert.equal(await withKinoApi(metas), metas);
     assert.equal(calls.length, 0);
     assert.equal(fs.existsSync(dbFile), false);
-    process.env.KINOAPI_API_KEY = 'test-key';
+    delete process.env.KINOAPI_API_KEY;
+    process.env.KP_SERVICE_URL = 'http://kp:8080/';
   });
 
   test('missing titles are asked for in batches of at most 50 and waited for', async () => {
     calls = [];
-    process.env.KINOAPI_CATALOG_WAIT_MS = '3000';
+    process.env.KP_CATALOG_WAIT_MS = '3000';
     const metas = tiles(1000, 120);
     const out = await withKinoApi(metas);
     assert.deepEqual(calls.map((call) => call.items.length).sort((a, b) => b - a), [50, 50, 20]);
-    assert.ok(calls.every((call) => call.auth === 'Bearer test-key'));
-    assert.deepEqual(calls[0].items[0], { source: 'tmdb', id: '1000', type: 'movie' });
+    assert.ok(calls.every((call) => call.url === 'http://kp:8080/titles' && call.auth === null));
+    const first = calls.flatMap((call) => call.items).find((item) => item.k === 'tmdb:movie:1000');
+    assert.deepEqual(first, {
+      k: 'tmdb:movie:1000', type: 'movie', tmdb: '1000', tt: 'tt1000', name: '', original: '', english: '',
+      year: 2001, countries: [], tier: 'month',
+    });
+    assert.ok(tracked.length === 3 && tracked.every((name) => name === 'kp'));
     const starts = calls.map((call) => call.at).sort((a, b) => a - b);
     for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 180, `requests ${starts[i] - starts[i - 1]} ms apart`);
     assert.equal(out.filter((meta) => meta.kpRating === '7.3' && meta.kpVotes === 42).length, 120);
@@ -321,14 +377,14 @@ describe('withKinoApi', () => {
     const page = [...tiles(2000, 3), { id: 'tt2000', type: 'movie', _tmdbId: '2000' }];
     const [a, b] = await Promise.all([withKinoApi(page), withKinoApi(tiles(2000, 3))]);
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].items.map((item) => item.id), ['2000', '2001', '2002']);
+    assert.deepEqual(calls[0].items.map((item) => item.tmdb), ['2000', '2001', '2002']);
     assert.equal(a[3].kpRating, '7.3');
     assert.equal(b[0].kpRating, '7.3');
   });
 
-  test('a response waits no longer than KINOAPI_CATALOG_WAIT_MS', async () => {
+  test('a response waits no longer than KP_CATALOG_WAIT_MS', async () => {
     calls = [];
-    process.env.KINOAPI_CATALOG_WAIT_MS = '300';
+    process.env.KP_CATALOG_WAIT_MS = '300';
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     answer = async (call) => {
@@ -343,14 +399,14 @@ describe('withKinoApi', () => {
     assert.equal(out[0].kpRating, undefined);
     await pause(100);
     answer = ok;
-    process.env.KINOAPI_CATALOG_WAIT_MS = '0';
+    process.env.KP_CATALOG_WAIT_MS = '0';
     assert.equal((await withKinoApi(tiles(3000, 2)))[0].kpRating, '7.3');
     assert.equal(calls.length, 1);
   });
 
   test('wait 0 never waits', async () => {
     calls = [];
-    process.env.KINOAPI_CATALOG_WAIT_MS = '0';
+    process.env.KP_CATALOG_WAIT_MS = '0';
     const out = await withKinoApi(tiles(3500, 1));
     assert.equal(out[0].kpRating, undefined);
     await pause(400);
@@ -374,11 +430,11 @@ describe('withKinoApi', () => {
 
   test('stale data is served as is; null keeps the last good data', async () => {
     calls = [];
-    process.env.KINOAPI_CATALOG_WAIT_MS = '3000';
+    process.env.KP_CATALOG_WAIT_MS = '3000';
     const db = sql();
     db.prepare(`UPDATE kino_titles SET expires_at = 0 WHERE k = 'tmdb:movie:1001'`).run();
     db.close();
-    answer = (call) => Response.json({ data: call.items.map(() => null), meta: { requested: call.items.length, found: 0 } });
+    answer = (call) => Response.json({ data: call.items.map(() => null) });
     const started = Date.now();
     const out = await withKinoApi(tiles(1001, 1));
     assert.ok(Date.now() - started < 300, 'stale titles do not wait');
@@ -394,25 +450,21 @@ describe('withKinoApi', () => {
     answer = ok;
   });
 
-  test('429 pauses for Retry-After and leaves the rows alone', async () => {
+  test('an error status leaves the rows alone, and the titles are not asked again for 120 s', async () => {
     calls = [];
-    process.env.KINOAPI_CATALOG_WAIT_MS = '300';
-    answer = () => new Response('{}', { status: 429, headers: { 'Retry-After': '1' } });
+    process.env.KP_CATALOG_WAIT_MS = '300';
+    answer = () => new Response('{}', { status: 500 });
     const first = await withKinoApi(tiles(4000, 2));
-    const limitedAt = calls[0].at;
     assert.equal(first[0].kpRating, undefined);
     assert.equal(calls.length, 1);
 
     calls = [];
     answer = ok;
-    process.env.KINOAPI_CATALOG_WAIT_MS = '3000';
-    assert.equal((await withKinoApi(tiles(4000, 2)))[0].kpRating, undefined, 'failed titles are not asked again for 120 s');
+    process.env.KP_CATALOG_WAIT_MS = '3000';
+    assert.equal((await withKinoApi(tiles(4000, 2)))[0].kpRating, undefined);
     assert.equal(calls.length, 0);
-
-    const next = await withKinoApi(tiles(5000, 1));
-    assert.equal(next[0].kpRating, '7.3');
+    assert.equal((await withKinoApi(tiles(5000, 1)))[0].kpRating, '7.3', 'other titles are asked at once');
     assert.equal(calls.length, 1);
-    assert.ok(calls[0].at - limitedAt >= 990, `next request ${calls[0].at - limitedAt} ms after the 429`);
 
     const check = sql();
     const count = check.prepare(`SELECT COUNT(*) AS n FROM kino_titles WHERE k LIKE 'tmdb:movie:400%'`).get() as { n: number };
@@ -422,7 +474,7 @@ describe('withKinoApi', () => {
 
   test('a network failure leaves the tiles as they are', async () => {
     calls = [];
-    process.env.KINOAPI_CATALOG_WAIT_MS = '1000';
+    process.env.KP_CATALOG_WAIT_MS = '1000';
     answer = () => {
       throw new TypeError('fetch failed');
     };
@@ -433,9 +485,26 @@ describe('withKinoApi', () => {
     answer = ok;
   });
 
+  test('pending is not stored and not asked again for 2 min; null is', async () => {
+    calls = [];
+    process.env.KP_CATALOG_WAIT_MS = '3000';
+    answer = (call) => Response.json({ data: call.items.map((x) => (x.tmdb === '6500' ? { pending: true } : null)) });
+    const out = await withKinoApi(tiles(6500, 2));
+    assert.equal(out[0].kpId, undefined);
+    assert.equal(calls.length, 1);
+    await withKinoApi(tiles(6500, 2));
+    await pause(300);
+    assert.equal(calls.length, 1, 'pending waits RETRY_MS, a miss a day');
+    const db = sql();
+    const rows = db.prepare(`SELECT k, found FROM kino_titles WHERE k IN ('tmdb:movie:6500', 'tmdb:movie:6501')`).all() as StoredRow[];
+    db.close();
+    assert.deepEqual(rows.map((r) => [r.k, r.found]), [['tmdb:movie:6501', 0]]);
+    answer = ok;
+  });
+
   test('a database too busy to write leaves new titles for later instead of asking again', async () => {
     calls = [];
-    process.env.KINOAPI_CATALOG_WAIT_MS = '600';
+    process.env.KP_CATALOG_WAIT_MS = '600';
     const lock = sql();
     lock.prepare('BEGIN IMMEDIATE').run();
     try {
@@ -445,7 +514,7 @@ describe('withKinoApi', () => {
       assert.equal(out[0].kpRating, undefined);
       assert.equal(calls.length, 1);
       await withKinoApi(tiles(7000, 3));
-      assert.equal(calls.length, 1, 'not sent to Kino API again within 120 s');
+      assert.equal(calls.length, 1, 'not sent to kp again within 120 s');
     } finally {
       lock.prepare('ROLLBACK').run();
       lock.close();
@@ -478,18 +547,18 @@ describe('a store file that cannot be opened', () => {
   test('is not opened again for a while and leaks no file descriptors', async () => {
     const realFetch = globalThis.fetch;
     const realCwd = process.cwd();
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kinoapi-broken-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpdata-broken-'));
     let fetches = 0;
     try {
       process.chdir(dir);
       fs.mkdirSync(path.join('addon', 'data'), { recursive: true });
-      fs.writeFileSync(path.join('addon', 'data', 'kinoapi.sqlite'), 'x'.repeat(4096));
+      fs.writeFileSync(path.join('addon', 'data', 'kpdata.sqlite'), 'x'.repeat(4096));
       globalThis.fetch = (async () => {
         fetches++;
         throw new Error('no network in tests');
       }) as typeof fetch;
-      process.env.KINOAPI_API_KEY = 'test-key';
-      process.env.KINOAPI_CATALOG_WAIT_MS = '600';
+      process.env.KP_SERVICE_URL = 'http://kp:8080';
+      process.env.KP_CATALOG_WAIT_MS = '600';
       delete require.cache[require.resolve('./kinoApi')];
       const fresh = require('./kinoApi');
       const metas = tiles(1, 1);
@@ -503,8 +572,8 @@ describe('a store file that cannot be opened', () => {
     } finally {
       globalThis.fetch = realFetch;
       process.chdir(realCwd);
-      delete process.env.KINOAPI_API_KEY;
-      delete process.env.KINOAPI_CATALOG_WAIT_MS;
+      delete process.env.KP_SERVICE_URL;
+      delete process.env.KP_CATALOG_WAIT_MS;
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
