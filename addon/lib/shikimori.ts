@@ -16,7 +16,7 @@ import { envInt } from '../utils/envNumber';
  * or a description is replaced only when it has no Cyrillic in it, so a Russian text
  * from TMDB always stays.
  *
- * Added right before the response, after every cache, like Kino API. Answers are read in
+ * Added right before the response, after every cache, like the Kinopoisk data (kpData.ts). Answers are read in
  * batches through Shikimori's GraphQL API for every user at once and kept whole in their
  * own SQLite file; a response waits for new titles only briefly. Without SHIKIMORI_URL
  * nothing here runs and the file is never opened. Shikimori bans the IP of a client whose

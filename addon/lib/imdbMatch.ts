@@ -415,7 +415,7 @@ function suggestTurn(): Promise<void> {
 /** Until when IMDb is not asked after it turned a request away (403, 429, 5xx, a 2xx without the list). */
 let imdbPausedUntil = 0;
 
-// Required lazily, as in kinoApi.ts.
+// Required lazily, as in kpData.ts.
 function track(ms: number, ok: boolean): void {
   try {
     require('./requestTracker').trackProviderCall('tmdb', ms, ok);

@@ -5640,7 +5640,7 @@ const catalogRoute = async function (req, res) {
     if (Array.isArray(responseData?.metas) && req.params.forJellyfin !== '1') {
       // Each waits a little for new titles: side by side, the tiles wait for the slower one only.
       const [withKinopoisk, addLogoInfo, addRussianAnime] = await Promise.all([
-        require('./lib/kinoApi').withKinoApi(responseData.metas),
+        require('./lib/kpData').withKpData(responseData.metas),
         require('./lib/tmdbLogoInfo').lookUpTmdbLogoInfo(responseData.metas, config),
         require('./lib/shikimori').lookUpShikimori(responseData.metas),
       ]);
@@ -5884,7 +5884,7 @@ const metaRoute = async function (req, res) {
       // or Melange takes the meta for another title's.
       if (builtId !== stremioId && result.meta) result = { ...result, meta: { ...result.meta, imdb_id: stremioId } };
       const [withKinopoisk, addLogoInfo, addRussianAnime, addCinemetaPairs] = await Promise.all([
-        require('./lib/kinoApi').withKinoApi([result.meta]),
+        require('./lib/kpData').withKpData([result.meta]),
         require('./lib/tmdbLogoInfo').lookUpTmdbLogoInfo([result.meta], config),
         require('./lib/shikimori').lookUpShikimori([result.meta]),
         require('./lib/cinemetaPairs').lookUpCinemetaPairs([result.meta], (imdbId) => require('./lib/imdb').getMetaFromImdb(imdbId, 'series')),

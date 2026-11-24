@@ -1,5 +1,5 @@
 import consola from 'consola';
-import { kpItemOf, sourceOf, yearOf } from './kinoApi';
+import { kpItemOf, sourceOf, yearOf } from './kpData';
 
 /**
  * Melange: the Russian name, poster and description of a title AIOMetadata knows only from IMDb, from
@@ -12,7 +12,7 @@ import { kpItemOf, sourceOf, yearOf } from './kinoApi';
  * over TMDB's name or poster: a tt is another title at Kinopoisk now and then (3 of 50 Russian series), and
  * only the stand-ins had no such conflict in the sample.
  *
- * On the way out, after the meta caches, like the Kinopoisk data on tiles (kinoApi.ts): nothing is cached
+ * On the way out, after the meta caches, like the Kinopoisk data on tiles (kpData.ts): nothing is cached
  * here, kp answers from its SQLite. Off without KP_SERVICE_URL, but for the stand-in's episodes.
  *
  * IMDb's stand-in gives a series' episodes as number, firstAired and name, and Melange reads episode, released

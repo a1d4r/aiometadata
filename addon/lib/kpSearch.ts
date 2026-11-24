@@ -1,5 +1,5 @@
 import consola from 'consola';
-import { yearOf } from './kinoApi';
+import { yearOf } from './kpData';
 import { mapWithLimit } from '../utils/concurrency';
 import { isKpPoster, YEAR_SLACK } from './kpCard';
 
@@ -14,12 +14,12 @@ import { isKpPoster, YEAR_SLACK } from './kpCard';
  * whole word of a name, then with the query inside a name, then the rest; within a group by
  * log10(Kinopoisk votes + 10), one more for a name that is the query exactly; else as they came (TMDB's,
  * then Kinopoisk's). The votes are the tile's kpVotes, so the page is sorted on the way out, after
- * kinoApi.ts gave them (orderBySearch); a title Kinopoisk found has its votes from kp as well.
+ * kpData.ts gave them (orderBySearch); a title Kinopoisk found has its votes from kp as well.
  *
  * The added tiles are a search entry of their own next to TMDB's (TAIL_KEY + its key): 12 h like it,
  * a few minutes when kp or TMDB could not answer in full, so a slow moment is not kept for half a day.
  * A response waits for them TAIL_WAIT_MS at most; late ones still fill the entry.
- * Off without KP_SERVICE_URL (the same variable as Kinopoisk data on tiles, kinoApi.ts).
+ * Off without KP_SERVICE_URL (the same variable as Kinopoisk data on tiles, kpData.ts).
  */
 
 const logger = consola.withTag('KP Search');

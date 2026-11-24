@@ -2,7 +2,7 @@
  * Run without network or the kp service:
  *   TS_NODE_SKIP_PROJECT=1 TS_NODE_TRANSPILE_ONLY=1 \
  *   TS_NODE_COMPILER_OPTIONS='{"module":"commonjs","target":"es2022","esModuleInterop":true,"ignoreDeprecations":"6.0"}' \
- *   node --require ts-node/register --test addon/lib/kinoApi.test.ts
+ *   node --require ts-node/register --test addon/lib/kpData.test.ts
  */
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,11 +17,11 @@ import {
   mergeRow,
   projectView,
   sourceOf,
-  withKinoApi,
+  withKpData,
   yearOf,
   VIEW_VERSION,
   type StoredRow,
-} from './kinoApi';
+} from './kpData';
 
 const DAY = 86_400_000;
 const NOW = Date.parse('2026-11-05T12:00:00Z');
@@ -301,7 +301,7 @@ interface Call {
   items: any[];
 }
 
-describe('withKinoApi', () => {
+describe('withKpData', () => {
   const realFetch = globalThis.fetch;
   const realCwd = process.cwd();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kpdata-test-'));
@@ -339,7 +339,7 @@ describe('withKinoApi', () => {
     // Kino API's key, left over from before 24.11.2026, turns nothing on.
     process.env.KINOAPI_API_KEY = 'old-key';
     const metas = tiles(1, 3);
-    assert.equal(await withKinoApi(metas), metas);
+    assert.equal(await withKpData(metas), metas);
     assert.equal(calls.length, 0);
     assert.equal(fs.existsSync(dbFile), false);
     delete process.env.KINOAPI_API_KEY;
@@ -350,7 +350,7 @@ describe('withKinoApi', () => {
     calls = [];
     process.env.KP_CATALOG_WAIT_MS = '3000';
     const metas = tiles(1000, 120);
-    const out = await withKinoApi(metas);
+    const out = await withKpData(metas);
     assert.deepEqual(calls.map((call) => call.items.length).sort((a, b) => b - a), [50, 50, 20]);
     assert.ok(calls.every((call) => call.url === 'http://kp:8080/titles' && call.auth === null));
     const first = calls.flatMap((call) => call.items).find((item) => item.k === 'tmdb:movie:1000');
@@ -367,7 +367,7 @@ describe('withKinoApi', () => {
 
   test('stored titles are read from SQLite without a request', async () => {
     calls = [];
-    const out = await withKinoApi(tiles(1000, 5));
+    const out = await withKpData(tiles(1000, 5));
     assert.equal(calls.length, 0);
     assert.equal(out[4].kpId, String(100 + 1004));
   });
@@ -375,7 +375,7 @@ describe('withKinoApi', () => {
   test('the same title asked for at once goes out once', async () => {
     calls = [];
     const page = [...tiles(2000, 3), { id: 'tt2000', type: 'movie', _tmdbId: '2000' }];
-    const [a, b] = await Promise.all([withKinoApi(page), withKinoApi(tiles(2000, 3))]);
+    const [a, b] = await Promise.all([withKpData(page), withKpData(tiles(2000, 3))]);
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0].items.map((item) => item.tmdb), ['2000', '2001', '2002']);
     assert.equal(a[3].kpRating, '7.3');
@@ -392,7 +392,7 @@ describe('withKinoApi', () => {
       return ok(call);
     };
     const started = Date.now();
-    const out = await withKinoApi(tiles(3000, 2));
+    const out = await withKpData(tiles(3000, 2));
     const took = Date.now() - started;
     release();
     assert.ok(took >= 290 && took < 700, `waited ${took} ms`);
@@ -400,18 +400,18 @@ describe('withKinoApi', () => {
     await pause(100);
     answer = ok;
     process.env.KP_CATALOG_WAIT_MS = '0';
-    assert.equal((await withKinoApi(tiles(3000, 2)))[0].kpRating, '7.3');
+    assert.equal((await withKpData(tiles(3000, 2)))[0].kpRating, '7.3');
     assert.equal(calls.length, 1);
   });
 
   test('wait 0 never waits', async () => {
     calls = [];
     process.env.KP_CATALOG_WAIT_MS = '0';
-    const out = await withKinoApi(tiles(3500, 1));
+    const out = await withKpData(tiles(3500, 1));
     assert.equal(out[0].kpRating, undefined);
     await pause(400);
     assert.equal(calls.length, 1);
-    assert.equal((await withKinoApi(tiles(3500, 1)))[0].kpRating, '7.3');
+    assert.equal((await withKpData(tiles(3500, 1)))[0].kpRating, '7.3');
   });
 
   test('an outdated projection is rebuilt from raw without a request', async () => {
@@ -419,7 +419,7 @@ describe('withKinoApi', () => {
     const db = sql();
     db.prepare(`UPDATE kino_titles SET view = '{}', view_v = 0 WHERE k = 'tmdb:movie:1000'`).run();
     db.close();
-    const out = await withKinoApi(tiles(1000, 1));
+    const out = await withKpData(tiles(1000, 1));
     assert.equal(calls.length, 0);
     assert.equal(out[0].kpRating, '7.3');
     const check = sql();
@@ -436,7 +436,7 @@ describe('withKinoApi', () => {
     db.close();
     answer = (call) => Response.json({ data: call.items.map(() => null) });
     const started = Date.now();
-    const out = await withKinoApi(tiles(1001, 1));
+    const out = await withKpData(tiles(1001, 1));
     assert.ok(Date.now() - started < 300, 'stale titles do not wait');
     assert.equal(out[0].kpRating, '7.3');
     await pause(400);
@@ -454,16 +454,16 @@ describe('withKinoApi', () => {
     calls = [];
     process.env.KP_CATALOG_WAIT_MS = '300';
     answer = () => new Response('{}', { status: 500 });
-    const first = await withKinoApi(tiles(4000, 2));
+    const first = await withKpData(tiles(4000, 2));
     assert.equal(first[0].kpRating, undefined);
     assert.equal(calls.length, 1);
 
     calls = [];
     answer = ok;
     process.env.KP_CATALOG_WAIT_MS = '3000';
-    assert.equal((await withKinoApi(tiles(4000, 2)))[0].kpRating, undefined);
+    assert.equal((await withKpData(tiles(4000, 2)))[0].kpRating, undefined);
     assert.equal(calls.length, 0);
-    assert.equal((await withKinoApi(tiles(5000, 1)))[0].kpRating, '7.3', 'other titles are asked at once');
+    assert.equal((await withKpData(tiles(5000, 1)))[0].kpRating, '7.3', 'other titles are asked at once');
     assert.equal(calls.length, 1);
 
     const check = sql();
@@ -479,7 +479,7 @@ describe('withKinoApi', () => {
       throw new TypeError('fetch failed');
     };
     const metas = tiles(6000, 1);
-    const out = await withKinoApi(metas);
+    const out = await withKpData(metas);
     assert.equal(out, metas);
     assert.equal(calls.length, 1);
     answer = ok;
@@ -489,10 +489,10 @@ describe('withKinoApi', () => {
     calls = [];
     process.env.KP_CATALOG_WAIT_MS = '3000';
     answer = (call) => Response.json({ data: call.items.map((x) => (x.tmdb === '6500' ? { pending: true } : null)) });
-    const out = await withKinoApi(tiles(6500, 2));
+    const out = await withKpData(tiles(6500, 2));
     assert.equal(out[0].kpId, undefined);
     assert.equal(calls.length, 1);
-    await withKinoApi(tiles(6500, 2));
+    await withKpData(tiles(6500, 2));
     await pause(300);
     assert.equal(calls.length, 1, 'pending waits RETRY_MS, a miss a day');
     const db = sql();
@@ -509,11 +509,11 @@ describe('withKinoApi', () => {
     lock.prepare('BEGIN IMMEDIATE').run();
     try {
       const started = Date.now();
-      const out = await withKinoApi(tiles(7000, 3));
+      const out = await withKpData(tiles(7000, 3));
       assert.ok(Date.now() - started <= 700, `waited ${Date.now() - started} ms`);
       assert.equal(out[0].kpRating, undefined);
       assert.equal(calls.length, 1);
-      await withKinoApi(tiles(7000, 3));
+      await withKpData(tiles(7000, 3));
       assert.equal(calls.length, 1, 'not sent to kp again within 120 s');
     } finally {
       lock.prepare('ROLLBACK').run();
@@ -532,7 +532,7 @@ describe('withKinoApi', () => {
     db.prepare('BEGIN IMMEDIATE').run();
     try {
       const started = Date.now();
-      const out = await withKinoApi(tiles(1002, 2));
+      const out = await withKpData(tiles(1002, 2));
       assert.ok(Date.now() - started < 400, `took ${Date.now() - started} ms`);
       assert.deepEqual(out.map((meta) => meta.kpRating), ['7.3', '7.3']);
       assert.equal(calls.length, 0);
@@ -559,13 +559,13 @@ describe('a store file that cannot be opened', () => {
       }) as typeof fetch;
       process.env.KP_SERVICE_URL = 'http://kp:8080';
       process.env.KP_CATALOG_WAIT_MS = '600';
-      delete require.cache[require.resolve('./kinoApi')];
-      const fresh = require('./kinoApi');
+      delete require.cache[require.resolve('./kpData')];
+      const fresh = require('./kpData');
       const metas = tiles(1, 1);
-      assert.equal(await fresh.withKinoApi(metas), metas);
+      assert.equal(await fresh.withKpData(metas), metas);
       const before = fs.readdirSync('/dev/fd').length;
       const started = Date.now();
-      for (let i = 0; i < 50; i++) assert.equal(await fresh.withKinoApi(metas), metas);
+      for (let i = 0; i < 50; i++) assert.equal(await fresh.withKpData(metas), metas);
       assert.ok(Date.now() - started < 500, `took ${Date.now() - started} ms`);
       assert.equal(fs.readdirSync('/dev/fd').length, before);
       assert.equal(fetches, 0);

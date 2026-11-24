@@ -9,8 +9,8 @@ import { envInt } from '../utils/envNumber';
 /**
  * Kinopoisk data on catalog and search tiles, and on the title's own meta (not on the tiles
  * a person or collection page lists), from the kp service of Melange VPS: ids from Alloha's
- * table, numbers from kinopoiskapiunofficial.tech. Named after Kino API (kinoapi.lampac.dev),
- * its source until 24.11.2026; the store keeps its table name.
+ * table, numbers from kinopoiskapiunofficial.tech. Kino API (kinoapi.lampac.dev)
+ * was its source until 24.11.2026 (kinoApi.ts); its table name, kino_titles, stays: the table is on disk.
  *
  * Added after the catalog caches, right before the response, so its own freshness
  * does not depend on how long a row or a search stays in Redis. Raw answers are kept
@@ -49,12 +49,12 @@ export const VIEW_VERSION = 1;
 
 export type Tier = 'day' | 'week' | 'month';
 
-export interface KinoSource {
+export interface KpSource {
   k: string;
   type: 'movie' | 'tv';
 }
 
-export interface KinoRef extends KinoSource {
+export interface KpRef extends KpSource {
   tier: Tier;
   kpItem: KpItem;
 }
@@ -73,7 +73,7 @@ export interface KpItem {
   tier: Tier;
 }
 
-export interface KinoView {
+export interface KpView {
   kpRating?: string;
   kpVotes?: number;
   kpId?: string;
@@ -112,7 +112,7 @@ function idsOf(meta: any): { tmdb: string | null; tt: string | null } {
 }
 
 /** The key of a tile: the TMDB id with the tile's kind, else its IMDb id, else nothing to ask for. */
-export function sourceOf(meta: any): KinoSource | null {
+export function sourceOf(meta: any): KpSource | null {
   if (!meta || typeof meta !== 'object' || (meta.type !== 'movie' && meta.type !== 'series')) return null;
   const type = meta.type === 'series' ? 'tv' : 'movie';
   const { tmdb, tt } = idsOf(meta);
@@ -166,8 +166,8 @@ function voiceoverName(value: unknown): string {
 }
 
 /** The few fields tiles need, taken defensively from one kp answer. */
-export function projectView(raw: any): KinoView {
-  const view: KinoView = {};
+export function projectView(raw: any): KpView {
+  const view: KpView = {};
   if (!raw || typeof raw !== 'object') return view;
 
   const rating = Number(raw.kpRating);
@@ -216,7 +216,7 @@ export function yearOf(meta: any): number | null {
 }
 
 /** What the kp service gets for a tile. */
-export function kpItemOf(meta: any, source: KinoSource, tier: Tier): KpItem {
+export function kpItemOf(meta: any, source: KpSource, tier: Tier): KpItem {
   const { tmdb, tt } = idsOf(meta);
   const list = Array.isArray(meta?.countries) ? meta.countries : typeof meta?.country === 'string' ? meta.country.split(',') : [];
   const countries = list.map(text).filter((c: string) => c).slice(0, 20);
@@ -262,7 +262,7 @@ export function mergeRow(k: string, prev: StoredRow | undefined, item: unknown, 
 }
 
 /** A copy of the tile with the Kinopoisk fields; the tile itself is never changed, since cached tiles may be shared. */
-export function applyView(meta: any, view: KinoView | null | undefined): any {
+export function applyView(meta: any, view: KpView | null | undefined): any {
   if (!view || !meta || typeof meta !== 'object') return meta;
   const { age, ...fields } = view;
   let next = Object.keys(fields).length > 0 ? { ...meta, ...fields } : meta;
@@ -373,11 +373,11 @@ function openStore(): Store | null {
 }
 
 interface ReadView {
-  view: KinoView | null;
+  view: KpView | null;
   expiresAt: number;
 }
 
-function parseView(json: string | null): KinoView | null {
+function parseView(json: string | null): KpView | null {
   if (!json) return null;
   try {
     const view = JSON.parse(json);
@@ -402,7 +402,7 @@ function readViews(s: Store, keys: string[], now: number): Map<string, ReadView>
   if (outdated.length > 0) {
     try {
       const raws = s.readRaw.all(JSON.stringify(outdated)) as Array<{ k: string; raw: string | null }>;
-      const rebuilt: Array<[string, KinoView]> = [];
+      const rebuilt: Array<[string, KpView]> = [];
       for (const { k, raw } of raws) {
         try {
           rebuilt.push([k, projectView(JSON.parse(raw ?? 'null'))]);
@@ -429,7 +429,7 @@ function readViews(s: Store, keys: string[], now: number): Map<string, ReadView>
 }
 
 /** -> the keys the kp service had nothing for yet ("pending"): not stored, asked again later. */
-function storeAnswers(s: Store, refs: KinoRef[], data: unknown[], now: number): string[] {
+function storeAnswers(s: Store, refs: KpRef[], data: unknown[], now: number): string[] {
   const nulls = refs.filter((_, index) => !isTitle(data[index])).map((ref) => ref.k);
   const prev = new Map<string, StoredRow>();
   if (nulls.length > 0) {
@@ -488,7 +488,7 @@ function throttle(): Promise<void> {
   return turn;
 }
 
-async function fetchTitles(refs: KinoRef[]): Promise<unknown[]> {
+async function fetchTitles(refs: KpRef[]): Promise<unknown[]> {
   await throttle();
   const started = Date.now();
   let res: Response;
@@ -516,7 +516,7 @@ async function fetchTitles(refs: KinoRef[]): Promise<unknown[]> {
 }
 
 interface Pending {
-  ref: KinoRef;
+  ref: KpRef;
   done: Promise<void>;
   resolve: () => void;
 }
@@ -527,7 +527,7 @@ const failed = new LRUCache<string, number>({ max: 20000 });
 let running = 0;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-function queue(ref: KinoRef): Promise<void> | undefined {
+function queue(ref: KpRef): Promise<void> | undefined {
   const busy = inflight.get(ref.k) ?? pending.get(ref.k)?.done;
   if (busy) return busy;
   if ((failed.get(ref.k) ?? 0) > Date.now() || pending.size >= QUEUE_LIMIT) return undefined;
@@ -616,7 +616,7 @@ async function waitFor(waiting: Promise<void>[], ms: number): Promise<void> {
 
 async function enrich(metas: any[]): Promise<any[]> {
   const now = Date.now();
-  const refs = new Map<string, KinoRef>();
+  const refs = new Map<string, KpRef>();
   const keyAt = metas.map((meta) => {
     const source = sourceOf(meta);
     if (!source) return undefined;
@@ -663,7 +663,7 @@ async function enrich(metas: any[]): Promise<any[]> {
 }
 
 /** Catalog and search tiles, or a title's meta, with Kinopoisk fields added; the same array when there is nothing to add or no KP_SERVICE_URL. */
-export async function withKinoApi(metas: any[]): Promise<any[]> {
+export async function withKpData(metas: any[]): Promise<any[]> {
   if (!Array.isArray(metas) || metas.length === 0 || !kpUrl()) return metas;
   try {
     return await enrich(metas);
